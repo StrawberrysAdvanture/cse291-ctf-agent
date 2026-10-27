@@ -37,7 +37,7 @@ def parse_keys(key_path=None):
     try:
         with open(key_path, 'r') as k:
             for line in k:
-                line = line.split(":")
+                line = line.split(":", 1)
                 keys[line[0].strip()] = line[1].strip()
         return keys
     except FileExistsError:
