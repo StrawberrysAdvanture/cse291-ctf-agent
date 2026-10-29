@@ -293,8 +293,11 @@ class VLLMBackend(Backend):
             status.debug_message(msg)
             return False, tool_call.error(msg)
 
-    def send(self, message : str) -> Tuple[Optional[str],bool]:
-        self.append(self.user_message(message))
+
+    def send(self, message: Optional[str]): # This is the customized send method
+        if message is not None:
+            self.append(self.user_message(message))
+
         _, content = self.call_model()
         return content, self.last_tool_calls, 0
 
