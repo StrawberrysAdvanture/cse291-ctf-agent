@@ -3,13 +3,19 @@
 # Build main docker image
 docker build --build-arg HOST_UID=$(id -u) -t ctfenv .
 
+# The agent and challenge servers share this network. It is internal, so containers on it
+# can reach each other but not the internet (the agent must not look up solutions online).
 networkname="ctfnet"
-network_exists=$(docker network ls | grep $networkname)
-# Create network
-if [ -z "$network_exists" ]; then
-    docker network create ctfnet
+if docker network inspect $networkname > /dev/null 2>&1; then
+    if [ "$(docker network inspect -f '{{.Internal}}' $networkname)" != "true" ]; then
+        echo "Network ${networkname} exists but is not internal; recreating it"
+        docker network rm $networkname
+        docker network create --internal $networkname
+    else
+        echo "Network ${networkname} already exists and is internal, skip!"
+    fi
 else
-    echo "Network ${networkname} already exists, skip!"
+    docker network create --internal $networkname
 fi
 
 # Download and unpack Ghidra

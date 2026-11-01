@@ -12,3 +12,4 @@ backoff
 pyte
 tiktoken
 nyuctf
+pyyaml
