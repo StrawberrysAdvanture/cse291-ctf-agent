@@ -70,6 +70,7 @@ def attempt_metrics(a, flag):
         "invalid_commands": invalid,
         "unparsed_tool_calls": sum(1 for r in rounds if r.get("tool_extract_error")),
         "rounds_without_tool_call": sum(1 for r in rounds if not r.get("tool_calls")),
+        "truncated_rounds": sum(1 for r in rounds if r.get("truncated")),
         "repeated_actions": rep,
         "ineffective_repeats": ineff,
         "command_timeouts": sum(1 for e in a.events if e.timed_out),
@@ -104,6 +105,7 @@ def aggregate(rows, key):
             "mean_prompt_tokens": mean("prompt_tokens"), "mean_completion_tokens": mean("completion_tokens"),
             "mean_max_context_tokens": mean("max_context_tokens"),
             "mean_invalid_commands": mean("invalid_commands"), "mean_ineffective_repeats": mean("ineffective_repeats"),
+            "mean_truncated_rounds": mean("truncated_rounds"),
             "command_timeouts": sum(r["command_timeouts"] for r in g),
             "attempt_timeouts": sum(r["attempt_timeout"] for r in g),
             "finish_reasons": json.dumps(dict(sorted(

@@ -230,6 +230,10 @@ class VLLMBackend(Backend):
             "prompt_tokens": usage.prompt_tokens if usage else None,
             "completion_tokens": usage.completion_tokens if usage else None,
             "model_finish_reason": response.choices[0].finish_reason,
+            # Raw, pre-formatter output so the trace shows exactly what the model emitted,
+            # including replies truncated at max_tokens that never reached a tool call
+            "raw_content": response.choices[0].message.content,
+            "truncated": response.choices[0].finish_reason == "length",
             "tool_extract_error": None,
         }
         # Check if the model wants to run more tools and add the stop sequence

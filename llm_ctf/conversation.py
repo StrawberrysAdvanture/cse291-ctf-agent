@@ -242,6 +242,7 @@ class CTFConversation:
             "nonzero_returncodes": sum(1 for c in calls if c["returncode"] not in (None, 0)),
             "command_timeouts": sum(1 for c in calls if c["timed_out"]),
             "tool_extract_errors": sum(1 for r in self.round_log if r.get("tool_extract_error")),
+            "truncated_rounds": sum(1 for r in self.round_log if r.get("truncated")),
             "rounds_without_tool_calls": sum(1 for r in self.round_log
                                              if r["model_latency"] is not None and not r["tool_calls"]),
         }
