@@ -167,14 +167,16 @@ class CTFConversation:
             # Tool lookup
             tool = self.environment.available_tools.get(tool_call.name)
             if not tool:
-                status.error_message(f"Unknown tool {tool_call.name}")
+                status.debug_message(f"Unknown tool {tool_call.name}")
                 tool_res = tool_call.error(f"Unknown tool {tool_call.name}")
             else:
-                # Parse arguments
-                parsed, tool_call = self.backend.parse_tool_arguments(tool, tool_call)
+                # Parse arguments. On failure the backend returns a ToolResult; keep the
+                # original tool_call (which has .function) so summarize_tool_result can log it.
+                parsed, parsed_out = self.backend.parse_tool_arguments(tool, tool_call)
                 if not parsed:
-                    tool_res = tool_call
+                    tool_res = parsed_out
                 else:
+                    tool_call = parsed_out
                     try:
                         tool_res = tool.run(tool_call)
                     except TypeError as e:
