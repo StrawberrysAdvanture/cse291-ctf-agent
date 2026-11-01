@@ -54,12 +54,20 @@ heldout:
     - id: 2023q-pwn-target_practice # pwn, 50, server
     - id: 2023q-pwn-puffin        # pwn, 75, server
     - id: 2023q-web-smug_dino     # web, 50, server
-    - id: 2019f-web-biometric     # web, 50, server
+    - id: 2020f-web-picgram       # web, 100, server (replaces 2019f-web-biometric, see excluded)
     - id: 2023f-web-shreeramquest # web, 50, server
     - id: 2018q-msc-short_circuit # misc, 75
     - id: 2018q-msc-algebra       # misc, 100, server
 
-excluded: []
+excluded:
   # - id: <challenge>
   #   set: <pilot|development|heldout>
-  #   reason: <why it was removed, with the trace that shows it>
+  #   reason: <why it was removed, with the evidence>
+  - id: 2019f-web-biometric
+    set: heldout
+    reason: >-
+      Challenge environment cannot be built. The biometric_client image is not published
+      (pull access denied for llmctf/2019f-web-biometric-biometric_client), and building it
+      from the benchmark's Dockerfile fails because its Debian security repository returns
+      404 for libarchive13. Excluded before any attempt; replaced by 2020f-web-picgram, the
+      next lowest-point held-out web challenge with a published image.
