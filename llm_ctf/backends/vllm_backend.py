@@ -41,7 +41,7 @@ class VLLMBackend(Backend):
     }
 
     def __init__(self, system_message : str, hint_message: str, tools: dict[str,Tool], prompt_manager, model=None, api_key=None, api_endpoint=None, formatter="xml", args: Namespace = None):
-        self.formatter : Formatter = Formatter.from_name("xml")(tools, prompt_manager)
+        self.formatter : Formatter = Formatter.from_name(formatter)(tools, prompt_manager)
         self.tools = tools
         self.args = args
 
@@ -60,6 +60,12 @@ class VLLMBackend(Backend):
         self.hint_message_content = hint_message
         self.outgoing_messages = []
         self.last_tool_calls = []
+        # Sampling settings come from the experiment config (see llm_ctf_solve.py)
+        self.sampling = dict(temperature=0.6, max_tokens=1024, seed=None)
+        self.sampling.update(getattr(args, "sampling", None) or {})
+        # Usage and status of the latest model call, read by CTFConversation
+        self.last_call_info = {}
+        self.call_count = 0
 
     def client_setup(self):
         if self.api_endpoint:
@@ -209,15 +215,25 @@ class VLLMBackend(Backend):
         response = self.client.chat.completions.create(
             model=self.model,
             messages=self.outgoing_messages,
-            temperature=0.6,
-            max_tokens=1024,
+            temperature=self.sampling["temperature"],
+            max_tokens=self.sampling["max_tokens"],
+            # Distinct but reproducible seed per call, so repeated prompts can still vary
+            seed=None if self.sampling["seed"] is None else self.sampling["seed"] + self.call_count,
             stop=stop_seqs,
             # frequency_penalty=-0.2,
             # Not supported in OpenAI module but VLLM supports it
             extra_body={'repetition_penalty': 1.0},
         )
+        self.call_count += 1
+        usage = response.usage
+        self.last_call_info = {
+            "prompt_tokens": usage.prompt_tokens if usage else None,
+            "completion_tokens": usage.completion_tokens if usage else None,
+            "model_finish_reason": response.choices[0].finish_reason,
+            "tool_extract_error": None,
+        }
         # Check if the model wants to run more tools and add the stop sequence
-        if response.choices[0].finish_reason == "stop" and any(s in response.choices[0].message.content for s in start_seqs):
+        if response.choices[0].finish_reason == "stop" and any(s in (response.choices[0].message.content or "") for s in start_seqs):
             # Add the stop sequence to the content
             response.choices[0].message.content += "\n" + stop_seqs[0] + "\n"
             has_tool_calls = True
@@ -242,9 +258,9 @@ class VLLMBackend(Backend):
         # Some models consistently mess up their output in a predictable and fixable way;
         # apply a fix if one is available.
         if self.quirks.clean_content:
-            fixed_content = self.quirks.clean_content(original_content)
+            fixed_content = self.quirks.clean_content(original_content or "")
         else:
-            fixed_content = original_content
+            fixed_content = original_content or ""
 
         # Extract out the content (as opposed to the tool calls)
         extracted_content = self.formatter.extract_content(fixed_content)
@@ -263,6 +279,7 @@ class VLLMBackend(Backend):
                 status.debug_message(f"Error extracting tool calls: {estr}")
                 tool_calls = []
                 self.last_tool_calls = []
+                self.last_call_info["tool_extract_error"] = estr
                 self.messages.append(ErrorToolCalls(original_response, estr, extracted_content))
                 self.append(
                     self.tool_results_message([
@@ -296,6 +313,7 @@ class VLLMBackend(Backend):
 
     def send(self, message: Optional[str]): # This is the customized send method
         if message is not None:
+            self.messages.append(UserMessage(message))
             self.append(self.user_message(message))
 
         _, content = self.call_model()
@@ -308,6 +326,8 @@ class VLLMBackend(Backend):
             conv_message = message
         elif isinstance(message, list) and isinstance(message[0], ToolResult):
             conv_message = self.tool_results_message(message)
+            # Keep the observations in the trace, not only in the outgoing prompt
+            self.messages.extend(message)
         else:
             raise ValueError(f"Unknown message type: {type(message)}")
         # Save the message to the log we pass back to the model

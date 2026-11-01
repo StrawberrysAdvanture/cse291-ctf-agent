@@ -6,6 +6,7 @@ import json
 import os
 import argparse
 import shutil
+import getpass
 import yaml
 from pathlib import Path
 
@@ -54,14 +55,16 @@ def main():
     parser.add_argument("--disable-markdown", default=False, action="store_true", help="don't render Markdown formatting in messages")
     parser.add_argument("-m", "--max-rounds", type=int, default=10, help="maximum number of rounds to run")
     parser.add_argument("--max-cost", type=float, default=10, help="maximum cost of the conversation to run")
+    parser.add_argument("--max-time", type=float, default=None, help="maximum wall-clock seconds per attempt")
 
     # Log directory options
     parser.add_argument("--skip-exist", action="store_true", help="Skip existing logs and experiments")
-    parser.add_argument("-L", "--logdir", default=str(script_dir / "logs" / os.getlogin()), help="log directory to write the log")
+    parser.add_argument("-L", "--logdir", default=str(script_dir / "logs" / getpass.getuser()), help="log directory to write the log")
     parser.add_argument("-n", "--name", help="Experiment name (creates subdir in logdir)")
     parser.add_argument("-i", "--index", help="Round index of the experiment (creates subdir in logdir)")
 
     args = parser.parse_args()
+    args.sampling = {}
     config = None
     if args.config:
         try:
@@ -83,6 +86,15 @@ def main():
         args.debug = config_experiment.get("debug", args.debug)
         args.skip_exist = config_experiment.get("skip_exist", args.skip_exist)
         args.hints = config_demostration.get("hints", [])
+        args.max_time = config_parameter.get("max_time", args.max_time)
+        args.sampling = dict(config.get("sampling", {}))
+        # Attempt i of a batch uses seed + i, so repeated attempts differ but are reproducible
+        if args.sampling.get("seed") is not None and args.index is not None:
+            args.sampling["seed"] += int(args.index)
+        args.git_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=script_dir,
+                                         capture_output=True, text=True).stdout.strip()
+        args.git_dirty = bool(subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                                             cwd=script_dir, capture_output=True, text=True).stdout.strip())
 
     status.set(quiet=args.quiet, debug=args.debug, disable_markdown=args.disable_markdown)
 
@@ -142,8 +154,10 @@ def main():
                         args=args
                     )
 
-    with CTFConversation(environment, challenge, prompt_manager, backend, logfile, max_rounds=args.max_rounds, max_cost=args.max_cost, args=args) as convo:
+    with CTFConversation(environment, challenge, prompt_manager, backend, logfile, max_rounds=args.max_rounds, max_cost=args.max_cost, max_time=args.max_time, args=args, config=config) as convo:
         convo.run()
+    if convo.finish_reason in ("error", "setup_error"):
+        exit(1)
 
 if __name__ == "__main__":
     main()

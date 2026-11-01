@@ -68,6 +68,7 @@ class CheckFlag(Tool):
         """Check if a flag is correct."""
         if flag is None:
             return {"error": "No flag provided"}
+        self.environment.submitted_flags.append(flag)
         status.print(f"Checking flag:")
         status.print(f"  Provided: [blue]{flag}[/blue]", markup=True)
         status.print(f"    Actual: [green]{self.real_flag}[/green]", markup=True)

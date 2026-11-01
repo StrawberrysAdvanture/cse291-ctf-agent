@@ -1,0 +1,65 @@
+# Phase 1 challenge subset (NYU CTF Bench, dataset version used by nyuctf 1.1.1).
+#
+# Selection rules, applied to the challenge.json metadata of all 257 challenges:
+#   - low point values (the original competition's difficulty signal), CSAW Quals preferred
+#   - coverage of every category, since results are reported per category
+#   - static (file-only) challenges preferred: cheaper, faster, easier to isolate
+#   - no challenges whose distributed files exceed ~10 MB
+#   - held-out challenges come only from the test split and are never used for tuning
+# Point values are not comparable across years and 84 challenges have none, so the
+# pilot is used to confirm the baseline can make progress at this difficulty.
+#
+# Any challenge removed after the pilot must be listed under `excluded` with a reason.
+
+pilot:
+  # Used only to validate the pipeline. Excluded from all reported results.
+  split: test
+  challenges:
+    - id: 2018f-msc-leaked_flag   # misc, 1 pt: near-trivial end-to-end check
+    - id: 2023q-rev-baby_s_first  # rev, 25 pts: static file challenge
+    - id: 2023q-pwn-my_first_pwnie # pwn, 25 pts: exercises the challenge-server path
+
+development:
+  # Phase 1 trace inspection; Phase 2 tuning.
+  split: development
+  challenges:
+    - id: 2013q-cry-csawpad       # crypto, 200
+    - id: 2015q-cry-eps           # crypto, no points listed
+    - id: 2016q-for-kill          # forensics, 50
+    - id: 2016q-for-evidence_zip  # forensics, 100
+    - id: 2015q-for-pcapin        # forensics, 150
+    - id: 2016q-rev-rock          # rev, 100
+    - id: 2014f-rev-odd           # rev, 200
+    - id: 2016q-pwn-warmup        # pwn, 50, server
+    - id: 2014q-pwn-the_road_less_traveled # pwn, 100, server
+    - id: 2013q-msc-networking_1  # misc, no points listed
+  # The development split has no web challenge at <=200 points, so web is held-out only.
+
+heldout:
+  split: test
+  challenges:
+    - id: 2023q-rev-baby_s_third  # rev, 50
+    - id: 2019q-rev-beleaf        # rev, 50
+    - id: 2018q-rev-a_walk_through_x86_part_1 # rev, 50
+    - id: 2023q-rev-whataxor      # rev, 75
+    - id: 2018q-cry-babycrypto    # crypto, 50
+    - id: 2017q-cry-almost_xor    # crypto, no points listed
+    - id: 2020q-cry-perfect_secrecy # crypto, 50, server
+    - id: 2019q-cry-byte_me       # crypto, 50, server
+    - id: 2023q-for-1black0white  # forensics, 50
+    - id: 2023f-for-floating_points # forensics, 50
+    - id: 2018q-for-simple_recovery # forensics, 150
+    - id: 2018q-pwn-bigboy        # pwn, 25, server
+    - id: 2018q-pwn-get_it        # pwn, 50, server
+    - id: 2023q-pwn-target_practice # pwn, 50, server
+    - id: 2023q-pwn-puffin        # pwn, 75, server
+    - id: 2023q-web-smug_dino     # web, 50, server
+    - id: 2019f-web-biometric     # web, 50, server
+    - id: 2023f-web-shreeramquest # web, 50, server
+    - id: 2018q-msc-short_circuit # misc, 75
+    - id: 2018q-msc-algebra       # misc, 100, server
+
+excluded: []
+  # - id: <challenge>
+  #   set: <pilot|development|heldout>
+  #   reason: <why it was removed, with the trace that shows it>

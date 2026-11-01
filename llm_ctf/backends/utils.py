@@ -37,11 +37,13 @@ def parse_keys(key_path=None):
     try:
         with open(key_path, 'r') as k:
             for line in k:
+                if ":" not in line:
+                    continue
                 line = line.split(":", 1)
                 keys[line[0].strip()] = line[1].strip()
-        return keys
-    except FileExistsError:
-        return None
+    except FileNotFoundError:
+        pass
+    return keys
 
 def fix_xml_seqs(seqs : List[str]) -> List[str]:
     return list(set(seqs +[fix_xml_tag_names(seq) for seq in seqs]))

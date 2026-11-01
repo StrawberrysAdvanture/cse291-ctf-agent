@@ -21,6 +21,9 @@ class CTFEnvironment:
         self.solved = False
         # The GiveUp tool can set this to give up the challenge
         self.giveup = False
+        # Every flag passed to the CheckFlag tool, in order
+        self.submitted_flags = []
+        self.container = None
 
     def setup(self):
         self.start_docker()
@@ -61,8 +64,16 @@ class CTFEnvironment:
         return containerpath
 
     def stop_docker(self):
+        if not self.container:
+            return
         status.debug_message(f"Stopping environment container {self.container_image} {self.container}...")
         subprocess.run(["docker", "stop", self.container], check=True, capture_output=True)
+
+    def network_is_internal(self):
+        """True if the agent's Docker network has no route to the internet."""
+        out = subprocess.run(["docker", "network", "inspect", "-f", "{{.Internal}}", self.network],
+                             capture_output=True, text=True)
+        return out.stdout.strip() == "true"
 
     @property
     def container_home(self):
