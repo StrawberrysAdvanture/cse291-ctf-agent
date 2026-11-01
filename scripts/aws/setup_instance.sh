@@ -35,7 +35,7 @@ export PATH=$HOME/.local/bin:$PATH
 [ -d $PROJECT/ctf-env ] || uv venv --python 3.11 $PROJECT/ctf-env
 VIRTUAL_ENV=$PROJECT/ctf-env uv pip install -q -r requirements.txt
 [ -d $PROJECT/vllm-env ] || uv venv --python 3.11 $PROJECT/vllm-env
-VIRTUAL_ENV=$PROJECT/vllm-env uv pip install -q 'vllm==0.7.3' 'transformers==4.49.0' 'huggingface_hub[cli]'
+VIRTUAL_ENV=$PROJECT/vllm-env uv pip install -q 'vllm==0.7.3' 'transformers==4.49.0' 'huggingface_hub[cli]' setuptools
 
 echo "== model weights (pinned revision)"
 $PROJECT/vllm-env/bin/huggingface-cli download Qwen/Qwen2.5-7B-Instruct-AWQ \

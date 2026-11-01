@@ -5,4 +5,5 @@ Limits: $3/day and $50 total. Disk: 60 GB gp3, about $0.16/day while it exists.
 
 | Session start (UTC) | Stop (UTC) | Instance type | Rate | Hours | Est. cost | Purpose |
 |---|---|---|---|---|---|---|
-| 2026-11-01 06:40 | | t3.medium | $0.0416/hr | | | Instance setup |
+| 2026-11-01 06:40 | 2026-11-01 08:26 | t3.medium | $0.0416/hr | 1.77 | $0.07 | Instance setup |
+| 2026-11-01 08:27 | | g6.xlarge | $0.81/hr | | | vLLM start, pilot (auto-stop 11:27) |
