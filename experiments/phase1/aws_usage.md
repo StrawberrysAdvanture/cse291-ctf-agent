@@ -8,3 +8,4 @@ Limits (AWS Educate dashboard): $20/day, $200 total. Daily usage resets on the d
 | 2026-11-01 06:40 | 2026-11-01 08:26 | t3.medium | $0.0416/hr | 1.77 | $0.07 | Instance setup |
 | 2026-11-01 08:27 | 2026-11-01 11:27 | g6.xlarge | $0.81/hr | 3.00 | $2.43 | vLLM, pilot (3 attempts); auto-stopped |
 | 2026-11-01 19:23 | 2026-11-01 20:57 | g6.xlarge | $0.81/hr | 1.57 | $1.27 | Dev set (30 attempts); stopped early (over $3/day) |
+| 2026-11-01 23:43 | 2026-11-02 04:12 | g6.xlarge | $0.81/hr | 4.48 | $3.61 | Held-out (60) + 5 dev re-runs + ShreeRamQuest; stopped |

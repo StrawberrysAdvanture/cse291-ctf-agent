@@ -1,0 +1,4 @@
+group,attempts,challenges,solved_attempts,solve_rate,challenges_solved_any,mean_rounds,mean_wall_time_s,mean_prompt_tokens,mean_completion_tokens,mean_max_context_tokens,mean_invalid_commands,mean_ineffective_repeats,mean_truncated_rounds,command_timeouts,attempt_timeouts,finish_reasons
+development,30,10,0,0.0,0,17.0,514.6,159704.3,12491.2,15656.5,7.9,9.4,9.4,0,0,"{""context_length"": 7, ""give_up"": 1, ""max_rounds"": 22}"
+heldout,60,20,1,0.017,1,18.4,544.1,156472.0,12899.4,16293.7,9.9,12.3,8.7,60,0,"{""context_length"": 7, ""max_rounds"": 52, ""solved"": 1}"
+pilot,3,3,1,0.333,1,14.0,283.6,121892.0,9287.7,11572.0,7.0,7.3,0.0,0,0,"{""max_rounds"": 2, ""solved"": 1}"
