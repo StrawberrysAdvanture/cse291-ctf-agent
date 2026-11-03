@@ -20,6 +20,7 @@ class VLLMBackend(Backend):
         "wizardlm2:8x22b-q8_0",
         "meta-llama/Meta-Llama-3-70B-Instruct",
         "Qwen/Qwen2.5-7B-Instruct",
+        "Qwen/Qwen2.5-32B-Instruct",
     ]
     QUIRKS = {
         "mistralai/Mixtral-8x7B-Instruct-v0.1": ModelQuirks(

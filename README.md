@@ -22,3 +22,24 @@ Follow these instructions to setup:
 ```python
 python3 llm_ctf_solve.py -c config/base_config.yaml --split <test|development> --challenge <challenge-name>
 ```
+
+## Running on AWS
+
+You can run the agent and a locally served model (vLLM) on a single AWS GPU instance. You need an AWS access key and the amount of GPU memory to request:
+
+```bash
+# 1. Install the AWS CLI: https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+# 2. Provide your AWS access key (IAM console -> Users -> Security credentials -> Create access key)
+export AWS_ACCESS_KEY_ID=...
+export AWS_SECRET_ACCESS_KEY=...
+aws sts get-caller-identity                     # checks the key works
+
+# 3. Launch: the 7B Qwen baseline on a 24 GB GPU, all development challenges
+./aws/ctf-aws.sh launch --gpu-mem 24 --challenges all
+
+# 4. Follow progress and download the results
+./aws/ctf-aws.sh logs <RUN_ID> -f
+./aws/ctf-aws.sh results <RUN_ID>               # -> ./aws-runs/<RUN_ID>/summary.txt
+```
+
+The instance terminates itself when the job is done. See [docs/aws.md](docs/aws.md) for all options, choosing GPU memory (including the 32B model), costs and troubleshooting.
