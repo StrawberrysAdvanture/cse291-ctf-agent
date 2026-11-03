@@ -12,10 +12,11 @@ nvidia-smi
 gpu_mib=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits | head -1 | tr -d ' ')
 extra_args=()
 if [ -z "$MAX_MODEL_LEN" ]; then
-    if [ "$gpu_mib" -ge 40000 ]; then
+    # Qwen2.5-7B's full context. Its AWQ weights take ~5.5 GB, so a 24 GB GPU has >14 GB
+    # of KV cache for it. GPUs under 20 GB (T4) keep the local baseline's 4096.
+    if [ "$gpu_mib" -ge 20000 ]; then
         MAX_MODEL_LEN=32768
     else
-        # Same as the local baseline. (A 32B model needs a 48 GB GPU; see docs/aws.md.)
         MAX_MODEL_LEN=4096
     fi
 fi
@@ -49,6 +50,11 @@ set_status "SETUP building ctfenv Docker image (slow on first run)"
 ./setup.sh
 
 printf 'MODEL_URL: http://127.0.0.1:8000/v1\n' > keys.cfg
+
+# Download the dataset now (while the model loads) so that listing challenges later
+# does not trigger a download whose git output would be mistaken for challenge names.
+set_status "SETUP downloading the NYU CTF dataset"
+python -m nyuctf.download
 
 # Agent config with the model set to whatever vLLM is serving.
 export RUN_CONFIG="$OUT/run_config.yaml" LOG_DIR="$OUT/logs"
@@ -84,21 +90,26 @@ if [ -n "$JOB_CMD" ]; then
     exit $?
 fi
 
+challenge_file="$OUT/challenges.txt"
 if [ "$CHALLENGES" = "all" ]; then
-    challenge_list=$(python - "$SPLIT" <<'PY'
+    # Names are written to a file by Python itself, so nothing printed by the
+    # dataset code can end up in the list.
+    python - "$SPLIT" "$challenge_file" <<'PY'
 import sys
 from nyuctf.dataset import CTFDataset
-for name, _ in CTFDataset(split=sys.argv[1]).all():
-    print(name)
+names = [name for name, _ in CTFDataset(split=sys.argv[1]).all()]
+with open(sys.argv[2], "w") as f:
+    f.write("\n".join(names) + "\n")
 PY
-)
 else
-    challenge_list=$(echo "$CHALLENGES" | tr ',' '\n')
+    echo "$CHALLENGES" | tr ',' '\n' | grep . > "$challenge_file"
 fi
 
-total=$(echo "$challenge_list" | grep -c .)
+total=$(grep -c . "$challenge_file")
+echo "Challenges to run ($total): $(paste -sd' ' "$challenge_file")"
 n=0; crashed=0
-for chal in $challenge_list; do
+while IFS= read -r chal; do
+    [ -n "$chal" ] || continue
     n=$((n + 1))
     set_status "RUNNING challenge $n/$total: $chal"
     if ! python llm_ctf_solve.py --challenge "$chal" --split "$SPLIT" \
@@ -106,7 +117,7 @@ for chal in $challenge_list; do
         echo "!!! llm_ctf_solve.py exited with an error on $chal"
         crashed=$((crashed + 1))
     fi
-done
+done < "$challenge_file"
 
 echo "Finished $total challenge(s); $crashed exited with an error."
 python - "$LOG_DIR" <<'PY' | tee "$OUT/summary.txt" || true

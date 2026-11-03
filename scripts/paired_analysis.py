@@ -55,15 +55,38 @@ def fmt(x, digits=1):
     return str(x)
 
 
+def tool_call_keys(log):
+    """One key per logged tool call: tool name plus its arguments, in order."""
+    keys = []
+    for item in log.get("messages") or []:
+        message = item[1] if isinstance(item, list) and len(item) == 2 else item
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        for tc in message.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            keys.append(f"{fn.get('name', '')} {fn.get('arguments', '')}".strip())
+    return keys
+
+
+def repeat_stats(log):
+    """(tool calls, calls that exactly repeat an earlier call in the same challenge)."""
+    keys = tool_call_keys(log)
+    repeats = sum(1 for i, k in enumerate(keys) if k in keys[:i])
+    return len(keys), repeats
+
+
 def summarize_arm(log):
     """Per-challenge metrics for one arm (log may be None if the run crashed before logging)."""
     if log is None:
         return {"solved": False, "finish": "no_log", "rounds": None, "calls": None,
-                "max_prompt": None, "mean_prompt": None, "runtime": None, "category": None,
-                "memory": None}
+                "max_prompt": None, "mean_prompt": None, "runtime": None, "model_time": None,
+                "category": None, "memory": None, "tool_calls": None, "repeats": None}
     tokens = log.get("prompt_tokens") or []
     challenge = log.get("challenge") or {}
+    n_calls, n_repeats = repeat_stats(log)
     return {
+        "tool_calls": n_calls,
+        "repeats": n_repeats,
         "solved": bool(log.get("solved")),
         "finish": log.get("finish_reason") or "unknown",
         "rounds": log.get("rounds"),
@@ -153,6 +176,21 @@ def analyze(a_logs, b_logs, names):
               f"| {fmt(statistics.median(b - a for a, b in p_))} |")
     w("")
 
+    w("## Repeated actions (issue I1 in logs/issues.md)\n")
+    w("A repeat is a tool call whose name and arguments exactly match an earlier call in the same challenge.\n")
+    w(f"| | {na} | {nb} |\n|---|---|---|")
+    ta = [(r[2]["tool_calls"], r[2]["repeats"]) for r in rows if r[2]["tool_calls"] is not None]
+    tb = [(r[3]["tool_calls"], r[3]["repeats"]) for r in rows if r[3]["tool_calls"] is not None]
+    def share(t):
+        calls = sum(c for c, _ in t)
+        return f"{sum(x for _, x in t)}/{calls} ({100 * sum(x for _, x in t) / calls:.1f}%)" if calls else "–"
+    w(f"| Repeated calls / all tool calls | {share(ta)} | {share(tb)} |")
+    w(f"| Challenges with at least one repeat | {sum(1 for _, x in ta if x)}/{len(ta)} | {sum(1 for _, x in tb if x)}/{len(tb)} |\n")
+    rp = [(r[2]["repeats"], r[3]["repeats"]) for r in rows if r[2]["repeats"] is not None and r[3]["repeats"] is not None]
+    if rp:
+        pos, neg, p = sign_test([b - a for a, b in rp])
+        w(f"Paired: {nb} has more repeats in {pos} challenges, fewer in {neg}; sign test p = {p:.3g}.\n")
+
     mem_entries = [m for r in rows for m in (r[3]["memory"] or [])]
     if mem_entries:
         w(f"## Memory summaries ({nb})\n")
@@ -176,10 +214,10 @@ def analyze(a_logs, b_logs, names):
     w("")
 
     w("## Per challenge\n")
-    w(f"| Challenge | {na} solved | {nb} solved | {na} finish | {nb} finish | {na} max prompt | {nb} max prompt |\n|---|---|---|---|---|---|---|")
+    w(f"| Challenge | {na} solved | {nb} solved | {na} finish | {nb} finish | {na} max prompt | {nb} max prompt | {na} repeats | {nb} repeats |\n|---|---|---|---|---|---|---|---|---|")
     for ch, cat, A, B in rows:
         w(f"| {ch} | {'✓' if A['solved'] else ''} | {'✓' if B['solved'] else ''} | {A['finish']} | {B['finish']} "
-          f"| {fmt(A['max_prompt'])} | {fmt(B['max_prompt'])} |")
+          f"| {fmt(A['max_prompt'])} | {fmt(B['max_prompt'])} | {fmt(A['repeats'])} | {fmt(B['repeats'])} |")
     return "\n".join(out) + "\n"
 
 

@@ -1,0 +1,6 @@
+[22:59:33] >>> SETUP system packages
+[23:00:06] >>> STARTING_VLLM Qwen/Qwen2.5-7B-Instruct-AWQ
+GPU memory: 23034 MiB, max model length: 4096
+[23:10:21] >>> SETUP agent environment
+[23:10:40] >>> SETUP building ctfenv Docker image (slow on first run)
+[23:27:30] >>> WAITING_FOR_MODEL (downloading/loading weights)

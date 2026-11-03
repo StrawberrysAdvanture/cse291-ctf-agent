@@ -50,8 +50,8 @@ launch options:
   --challenges LIST    Comma-separated challenge names, or "all"
                        (default: 2016q-cry-sleeping_guard).
   --split SPLIT        development | test (default: development).
-  --max-model-len N    vLLM context length (default: 32768 if the GPU has
-                       >= 40 GB, else 4096 as in the local baseline).
+  --max-model-len N    vLLM context length (default: 32768, the model's full
+                       context, on GPUs with >= 20 GB; 4096 on smaller GPUs).
   --max-hours H        Hard limit; the instance terminates after H hours (default: 12).
   --disk GB            Root volume size (default: 200).
   --instance-type T    Skip automatic selection and use this type.
