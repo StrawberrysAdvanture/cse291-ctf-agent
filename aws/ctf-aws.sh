@@ -131,6 +131,27 @@ ensure_instance_profile() {
     fi
 }
 
+# Security group with no inbound rules and all outbound traffic allowed. The VPC's
+# default group is not used because hardened accounts often strip its egress rules.
+ensure_security_group() {
+    local vpc=$1 sg
+    sg=$(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc" "Name=group-name,Values=$ROLE_NAME" \
+        --query 'SecurityGroups[0].GroupId' --output text)
+    if [ -z "$sg" ] || [ "$sg" = "None" ]; then
+        log "Creating security group $ROLE_NAME (outbound only, no inbound)"
+        sg=$(aws ec2 create-security-group --group-name "$ROLE_NAME" --vpc-id "$vpc" \
+            --description "llm-ctf runner: outbound only, no inbound" \
+            --tag-specifications "ResourceType=security-group,Tags=[{Key=Project,Value=$PROJECT_TAG}]" \
+            --query GroupId --output text)
+    fi
+    if ! aws ec2 describe-security-groups --group-ids "$sg" \
+            --query "SecurityGroups[0].IpPermissionsEgress[?IpProtocol=='-1'].IpRanges[].CidrIp" --output text | grep -q '0.0.0.0/0'; then
+        aws ec2 authorize-security-group-egress --group-id "$sg" \
+            --ip-permissions 'IpProtocol=-1,IpRanges=[{CidrIp=0.0.0.0/0}]' >/dev/null
+    fi
+    echo "$sg"
+}
+
 latest_ami() {
     aws ec2 describe-images --owners amazon \
         --filters "Name=name,Values=$AMI_NAME_PATTERN" Name=state,Values=available \
@@ -230,8 +251,12 @@ EOF
         case "$answer" in y|Y|yes) ;; *) die "cancelled" ;; esac
     fi
 
+    local vpc sg
+    vpc=$(aws ec2 describe-vpcs --filters Name=is-default,Values=true --query 'Vpcs[0].VpcId' --output text)
+    [ -n "$vpc" ] && [ "$vpc" != "None" ] || die "no default VPC in $REGION. Create one with: aws ec2 create-default-vpc"
     ensure_bucket
     ensure_instance_profile
+    sg=$(ensure_security_group "$vpc")
 
     # Package the working tree (tracked + untracked files, minus .gitignore'd ones such as keys.cfg).
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT   # global: the trap runs after this function returns
@@ -278,7 +303,7 @@ EOF
         [ -n "$subnet" ] && [ "$subnet" != "None" ] || continue
         for _ in 1 2 3 4 5 6; do
             if out=$(aws ec2 run-instances \
-                    --image-id "$ami" --instance-type "$inst_type" --subnet-id "$subnet" \
+                    --image-id "$ami" --instance-type "$inst_type" --subnet-id "$subnet" --security-group-ids "$sg" \
                     --iam-instance-profile "Name=$ROLE_NAME" \
                     --instance-initiated-shutdown-behavior terminate \
                     --metadata-options HttpTokens=required,HttpEndpoint=enabled \

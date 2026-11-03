@@ -29,5 +29,9 @@ set_status "SETUP system packages"
 apt-get -o DPkg::Lock::Timeout=600 update -q
 apt-get -o DPkg::Lock::Timeout=600 install -y -q python3-venv python3-pip unzip wget git curl
 usermod -aG docker ubuntu
+# nyuctf starts challenge services with `docker compose`.
+docker compose version >/dev/null 2>&1 ||
+    apt-get -o DPkg::Lock::Timeout=600 install -y -q docker-compose-plugin ||
+    echo "WARNING: docker compose is unavailable; challenges with services will fail"
 
 sudo -u ubuntu -H bash /home/ubuntu/repo/aws/remote/job.sh

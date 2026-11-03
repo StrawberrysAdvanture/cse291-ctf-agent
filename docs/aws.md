@@ -16,7 +16,7 @@ The script uses an **access key ID** and a **secret access key** (together, "the
 
 1. Sign in to the [AWS console](https://console.aws.amazon.com/) and open **IAM → Users**. Select your user, or create one.
 2. The user needs permission to use **EC2, S3 and IAM**. The simplest option is the `AdministratorAccess` policy on a dedicated account. If you use narrower permissions, the user must be able to:
-   - launch and terminate EC2 instances;
+   - launch and terminate EC2 instances, and create a security group;
    - create an S3 bucket and read and write its objects;
    - create an IAM role and instance profile and pass that role to EC2.
 3. Open **Security credentials → Create access key → Command Line Interface (CLI)**. Copy both values; the secret is shown only once.
@@ -110,7 +110,10 @@ To serve any other model, add its served name (the `--model` id without a traili
 
 1. **Locally**, `ctf-aws.sh`:
    - checks the credentials and picks an instance type that is offered in the region and fits your vCPU quota;
-   - on first use, creates the S3 bucket `llm-ctf-runs-<account>-<region>` and the IAM role `llm-ctf-runner`, which can only access that bucket;
+   - on first use, creates:
+     - the S3 bucket `llm-ctf-runs-<account>-<region>`;
+     - the IAM role `llm-ctf-runner`, which can only access that bucket;
+     - a security group `llm-ctf-runner` in the default VPC that allows outbound traffic and no inbound traffic. The VPC's default security group is not used because hardened accounts (including ours) remove its outbound rules.
    - uploads the working tree (git-tracked and untracked files; `.gitignore`'d files such as `keys.cfg` are left out);
    - launches the AWS Deep Learning Base GPU AMI (Ubuntu 22.04).
 2. **On the instance** (`aws/remote/`):
@@ -135,6 +138,7 @@ To serve any other model, add its served name (the `--model` id without a traili
 | `no valid AWS credentials` | Set the keys (step 1); check with `aws sts get-caller-identity`. Temporary credentials expire, so get new ones. |
 | `InsufficientInstanceCapacity` / `could not launch ... in any zone` | AWS has no free GPUs of that type right now. Retry later, or try another `AWS_REGION`. |
 | `needs N vCPUs, quota is M` | Request a higher "Running On-Demand G and VT instances" quota under **Service Quotas → EC2**. |
+| Status stays at `LAUNCHED`; the console shows `i/o timeout` | The instance has no outbound internet. Check that the `llm-ctf-runner` security group allows outbound traffic and that the default VPC routes `0.0.0.0/0` to an internet gateway. |
 | `UnauthorizedOperation ... service control policy` | Your organization blocks that region; use another `AWS_REGION`. |
 | `'X' is not in VLLMBackend.MODELS` | Register the served model name in `llm_ctf/backends/vllm_backend.py`. |
 | Job `FAILED` | Read `job.log` and `vllm.log` from `./aws/ctf-aws.sh results <RUN_ID>`. |
