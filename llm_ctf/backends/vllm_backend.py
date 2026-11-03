@@ -69,8 +69,11 @@ class VLLMBackend(Backend):
         # Optional action memory (see llm_ctf/memory.py). When enabled, each model call
         # gets the setup messages, the task, summaries of past actions and the next
         # instruction, instead of the full conversation.
+        run_command = tools.get("run_command")
+        environment = getattr(run_command, "environment", None)
         self.memory = ActionMemory.from_config(
-            getattr(args, "memory_config", None), self.client, self.model, prompt_manager)
+            getattr(args, "memory_config", None), self.client, self.model, prompt_manager,
+            container_getter=lambda: getattr(environment, "container", None))
         self._prefix_len = 0          # number of setup messages (system prompt, hints)
         self._task_message = None     # the first user message: the challenge description
         self._instruction = None      # the latest extra user message, e.g. "keep going"
@@ -342,6 +345,7 @@ class VLLMBackend(Backend):
         return {
             "prompt_tokens": self.prompt_tokens,
             "memory": self.memory.to_log() if self.memory is not None else None,
+            "memory_facts": self.memory.facts_log() if self.memory is not None else None,
         }
 
     def send(self, message: Optional[str]): # This is the customized send method
@@ -349,6 +353,7 @@ class VLLMBackend(Backend):
             self.finish_pending_action()
             if message is not None and self._task_message is None:
                 self._task_message = message
+                self.memory.set_task(message)
             else:
                 self._instruction = message
         if message is not None:

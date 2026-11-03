@@ -4,9 +4,32 @@
 ({{ omitted }} earlier action(s) are omitted to save space.)
 
 {% endif %}
+{% if earlier %}
+### Earlier actions (one line each)
+{% for line in earlier %}
+- {{ line }}
+{% endfor %}
+
+{% endif %}
 {% for step, summary in entries %}
 ### Action {{ step }}
 {{ summary }}
 
 {% endfor %}
+{% for step, text in raw %}
+### Action {{ step }} (most recent, shown in full; long outputs shortened)
+{{ text }}
+
+{% endfor %}
+{% if saved_dir %}
+These summaries replace the full outputs of your earlier actions. Each full output was saved in the container under `{{ saved_dir }}` (paths are given above); use `head`, `tail`, `sed -n 'A,Bp'` or `grep` on those files to look at them again.
+{% else %}
 These summaries replace the full outputs of your earlier actions, which are no longer shown. If you need a detail that a summary leaves out, run a command to get it again.
+{% endif %}
+{% if facts %}
+
+### Facts collected so far (exact values from your outputs)
+{% for kind, value in facts %}
+- {{ kind }}: `{{ value }}`
+{% endfor %}
+{% endif %}

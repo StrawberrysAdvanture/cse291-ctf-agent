@@ -1,7 +1,22 @@
 You maintain the working memory of an agent that is solving a CTF challenge in a Linux container. Below is the agent's latest action: its reasoning, the tools it called, and their results.
 
+{% if task %}
+The challenge the agent is working on:
+<challenge>
+{{ task }}
+</challenge>
+
+{% endif %}
+{% if facts %}
+Facts already recorded in memory (do not repeat them unless this action changed them):
+{{ facts }}
+
+{% endif %}
 Summarize this action in at most {{ max_words }} words. The agent will read your summary instead of the full action before it chooses what to do next. Rules:
 - Say what the agent did, what it found out, and whether it worked.
+{% if task %}
+- Say what the action established or ruled out with respect to finding the flag.
+{% endif %}
 - Copy exactly any concrete values that may be needed later: file names and paths, commands, URLs, hosts and ports, addresses and offsets, keys, passwords, decoded strings, error messages, and anything that looks like a flag or part of one.
 - Do not suggest next steps. Do not add anything that is not in the action.
 

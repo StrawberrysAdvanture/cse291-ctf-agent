@@ -55,10 +55,11 @@ def main():
     parser.add_argument("--disable-markdown", default=False, action="store_true", help="don't render Markdown formatting in messages")
     parser.add_argument("-m", "--max-rounds", type=int, default=10, help="maximum number of rounds to run")
     parser.add_argument("--max-cost", type=float, default=10, help="maximum cost of the conversation to run")
-    parser.add_argument("--memory", choices=["off", "llm", "truncate"], default=None,
+    parser.add_argument("--memory", choices=["off", "llm", "truncate", "mask"], default=None,
                         help="summarize each past action instead of resending the full conversation "
-                             "(llm: the model writes the summary; truncate: no model call). "
-                             "Overrides the config's memory section. vllm backend only.")
+                             "(llm: the model writes the summary; truncate: head and tail of each output; "
+                             "mask: outputs replaced by a placeholder). Overrides the config's memory "
+                             "section; other memory options come from the config. vllm backend only.")
 
     # Log directory options
     parser.add_argument("--skip-exist", action="store_true", help="Skip existing logs and experiments")
@@ -105,6 +106,8 @@ def main():
     else:
         dataset = CTFDataset(split=args.split)
     challenge = CTFChallenge(dataset.get(args.challenge), dataset.basedir)
+    # The memory's facts extractor matches flags against the challenge's format.
+    args.memory_config.setdefault("flag_format", getattr(challenge, "flag_format", None))
 
     logdir = Path(args.logdir).expanduser().resolve()
     logsubdir = []

@@ -46,12 +46,25 @@ Memory is currently implemented only for the `vllm` backend.
 ```yaml
 memory:
   enabled: true
-  summarizer: llm          # llm | truncate
+  summarizer: llm          # llm | truncate | mask
   max_summary_words: 80    # length limit stated in the summarizer prompt
   max_input_chars: 4000    # action text sent to the summarizer; long values keep their start and end
-  max_memory_chars: 4000   # size of the memory block; the oldest summaries are dropped first
+  max_memory_chars: 4000   # size of the summarized part of the memory block
   summary_max_tokens: 256  # generation limit for one summary
   # summarizer_model: ...  # default: the agent's own model, on the same vLLM server
+
+  # Options added after the literature review; all off by default. Each is described,
+  # with its sources and status, in docs/memory-experiments.md.
+  raw_tail: 0              # newest N actions shown verbatim (summarized once they age out)
+  raw_tail_chars: 2500
+  long_output_chars: 0     # actions at most this long are kept verbatim (0: off)
+  save_outputs: false      # write full outputs to files in the container and cite the path
+  output_dir: ~/.agent_outputs
+  facts: false             # pinned block of exact values extracted by regular expressions
+  max_facts_chars: 1200
+  summarizer_sees_task: false  # llm summarizer gets the challenge description and the facts
+  overflow: drop           # drop | merge (old summaries become one-line entries)
+  max_earlier_chars: 800
 ```
 
 The defaults are sized for a 4096-token context. The system prompt with tool descriptions is about 850 tokens, the challenge description 150–300, and 1024 tokens are reserved for the reply. Raise both character limits for models with longer contexts.
@@ -62,6 +75,7 @@ The defaults are sized for a 4096-token context. The system prompt with tool des
 |---|---|---|
 | `llm` | The model is asked (prompt: `prompts/templates/default/memory_summarize.md.jinja2`) to summarize the action in ≤ `max_summary_words` words. It must copy exact values (paths, addresses, keys, errors, flag-like strings) and must not suggest next steps. | One extra model call per action |
 | `truncate` | No model call: the reasoning, the tool calls, and the start and end of each output. | None |
+| `mask` | No model call: the reasoning and the tool calls; each output replaced by `output omitted (N lines)`, keeping the return code and short error messages. | None |
 
 If an `llm` summary fails (request error or empty reply), that action falls back to `truncate`, and the log records which summarizer produced each summary.
 
@@ -75,12 +89,16 @@ Each conversation log (`<challenge>.json`) now also contains:
 - `memory`: one entry per summarized action, with `step`, `summary`, `summarizer`, `summary_seconds`, `full_chars` and `summary_chars`. The value is `null` when memory is off.
 - Tool results and user messages in `messages`. The vLLM backend previously logged only the model's replies.
 
-## Known limitations of this first version
+## Known limitations of the first version (v1, all new options off)
 
-- **Everything is summarized, including the most recent action.** The model never sees the latest output verbatim, so if the summary drops a needed detail, the model must re-run the command. Keeping the last *k* actions in full is the obvious next option to try.
+- **Everything is summarized, including the most recent action.** The model never sees the latest output verbatim, so if the summary drops a needed detail, the model must re-run the command. Option: `raw_tail`.
 - The summary of the final action is never generated, because no model call follows it.
-- Summaries are not merged, so long runs drop their oldest summaries once `max_memory_chars` is reached.
-- With `llm`, summarization roughly doubles the number of model calls; `summary_seconds` in the log measures the added time.
+- Summaries are not merged, so long runs drop their oldest summaries once `max_memory_chars` is reached. Option: `overflow: merge`.
+- With `llm`, summarization roughly doubles the number of model calls; `summary_seconds` in the log measures the added time. Options: `mask`, `long_output_chars`.
+- Nothing can be looked up again except by re-running the command. Option: `save_outputs`.
+- No structured memory; exact values depend on the summarizer copying them. Option: `facts`.
+
+The options are implemented but untested; see [memory-experiments.md](memory-experiments.md).
 
 ## Tests
 
