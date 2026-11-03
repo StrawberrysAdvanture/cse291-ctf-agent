@@ -2,7 +2,12 @@ ghidra_11.0*
 /ghidra_11.0*
 LLM_CTF_Database
 test.sh
-/logs
+# Conversation logs written by llm_ctf_solve.py (default: logs/<user>/...) stay local.
+# The work log and curated experiment records under logs/ are tracked.
+/logs/*
+!/logs/README.md
+!/logs/worklog-*.md
+!/logs/runs/
 __pycache__/
 *.py[cod]
 *$py.class
