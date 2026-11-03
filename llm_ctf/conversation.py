@@ -175,6 +175,7 @@ class CTFConversation:
                 },
                 # "exception_info": exception_info,
                 "finish_reason": self.finish_reason,
+                **self.backend.extra_log(),
             },
             indent=4
         ))

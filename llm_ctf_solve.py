@@ -55,6 +55,10 @@ def main():
     parser.add_argument("--disable-markdown", default=False, action="store_true", help="don't render Markdown formatting in messages")
     parser.add_argument("-m", "--max-rounds", type=int, default=10, help="maximum number of rounds to run")
     parser.add_argument("--max-cost", type=float, default=10, help="maximum cost of the conversation to run")
+    parser.add_argument("--memory", choices=["off", "llm", "truncate"], default=None,
+                        help="summarize each past action instead of resending the full conversation "
+                             "(llm: the model writes the summary; truncate: no model call). "
+                             "Overrides the config's memory section. vllm backend only.")
 
     # Log directory options
     parser.add_argument("--skip-exist", action="store_true", help="Skip existing logs and experiments")
@@ -84,6 +88,15 @@ def main():
         args.debug = config_experiment.get("debug", args.debug)
         args.skip_exist = config_experiment.get("skip_exist", args.skip_exist)
         args.hints = config_demostration.get("hints", [])
+
+    # Action memory settings: the config's `memory` section, overridden by --memory.
+    args.memory_config = dict((config or {}).get("memory") or {})
+    if args.memory is not None:
+        args.memory_config["enabled"] = args.memory != "off"
+        if args.memory != "off":
+            args.memory_config["summarizer"] = args.memory
+    if args.memory_config.get("enabled") and args.backend != "vllm":
+        parser.error("memory is currently implemented only for the vllm backend")
 
     status.set(quiet=args.quiet, debug=args.debug, disable_markdown=args.disable_markdown)
 

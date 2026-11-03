@@ -23,6 +23,10 @@ Follow these instructions to setup:
 python3 llm_ctf_solve.py -c config/base_config.yaml --split <test|development> --challenge <challenge-name>
 ```
 
+## Action memory
+
+To fit long attempts into a small context window, the agent can replace each past action (model reply + tool outputs) with a short summary instead of resending the full conversation. Enable it with `--memory llm` (the model writes the summaries) or `--memory truncate` (no extra model call), or use `config/qwen_memory.yaml`. See [docs/memory.md](docs/memory.md).
+
 ## Running on AWS
 
 You can run the agent and a locally served model (vLLM) on a single AWS GPU instance. You need an AWS access key and the amount of GPU memory to request:

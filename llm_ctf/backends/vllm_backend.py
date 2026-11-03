@@ -9,6 +9,7 @@ from .backend import (AssistantMessage, Backend, ErrorToolCalls, FakeToolCalls,
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessage
 from ..tools import Tool, ToolCall, ToolResult
+from ..memory import ActionMemory, ActionRecord
 from rich.pretty import Pretty
 
 class VLLMBackend(Backend):
@@ -59,8 +60,22 @@ class VLLMBackend(Backend):
         self.quirks = self.QUIRKS.get(self.model, NO_QUIRKS)
         self.system_message_content = system_message
         self.hint_message_content = hint_message
+        self.prompt_manager = prompt_manager
         self.outgoing_messages = []
         self.last_tool_calls = []
+        # Prompt size of every model call, to compare context use with and without memory.
+        self.prompt_tokens = []
+
+        # Optional action memory (see llm_ctf/memory.py). When enabled, each model call
+        # gets the setup messages, the task, summaries of past actions and the next
+        # instruction, instead of the full conversation.
+        self.memory = ActionMemory.from_config(
+            getattr(args, "memory_config", None), self.client, self.model, prompt_manager)
+        self._prefix_len = 0          # number of setup messages (system prompt, hints)
+        self._task_message = None     # the first user message: the challenge description
+        self._instruction = None      # the latest extra user message, e.g. "keep going"
+        self._pending = None          # the current action, summarized before the next call
+        self._step = 0
 
     def client_setup(self):
         if self.api_endpoint:
@@ -103,6 +118,7 @@ class VLLMBackend(Backend):
         # import pdb; pdb.set_trace()
         for sm in system_messages:
             self.append(sm)
+        self._prefix_len = len(self.outgoing_messages)
 
         # TODO this won't work because run_tools has moved to Conversation
         # if self.quirks.needs_tool_use_demonstrations:
@@ -209,7 +225,7 @@ class VLLMBackend(Backend):
     def call_model_internal(self, start_seqs, stop_seqs):
         response = self.client.chat.completions.create(
             model=self.model,
-            messages=self.outgoing_messages,
+            messages=self.request_messages(),
             temperature=0.6,
             max_tokens=1024,
             stop=stop_seqs,
@@ -217,6 +233,9 @@ class VLLMBackend(Backend):
             # Not supported in OpenAI module but VLLM supports it
             extra_body={'repetition_penalty': 1.0},
         )
+        usage = getattr(response, "usage", None)
+        if usage is not None and getattr(usage, "prompt_tokens", None) is not None:
+            self.prompt_tokens.append(usage.prompt_tokens)
         # Check if the model wants to run more tools and add the stop sequence
         if response.choices[0].finish_reason == "stop" and any(s in response.choices[0].message.content for s in start_seqs):
             # Add the stop sequence to the content
@@ -253,27 +272,31 @@ class VLLMBackend(Backend):
         # Add the cleaned message to the log since the next part may fail
         self.append(message)
 
+        if self.memory is not None:
+            self._step += 1
+            self._pending = ActionRecord(step=self._step, thought=extracted_content or "")
+
         if has_tool_calls:
             # Extract tool calls (but don't parse yet)
             try:
                 tool_calls = self.formatter.extract_tool_calls(fixed_content)
                 self.messages.append(UnparsedToolCalls(original_response, tool_calls, extracted_content))
                 self.last_tool_calls = tool_calls
+                if self._pending is not None:
+                    self._pending.tool_calls = list(tool_calls)
             except Exception as e:
                 estr = f'{type(e).__name__}: {e}'
                 status.debug_message(f"Error extracting tool calls: {estr}")
                 tool_calls = []
                 self.last_tool_calls = []
                 self.messages.append(ErrorToolCalls(original_response, estr, extracted_content))
-                self.append(
-                    self.tool_results_message([
-                        ToolResult(
-                            name="[error]",
-                            id='[none]',
-                            result = {"error": f"Error extracting tool calls: {estr}"},
-                        )
-                    ])
-                )
+                self.append([
+                    ToolResult(
+                        name="[error]",
+                        id='[none]',
+                        result = {"error": f"Error extracting tool calls: {estr}"},
+                    )
+                ])
         else:
             self.last_tool_calls = []
             self.messages.append(AssistantMessage(extracted_content, original_response))
@@ -295,9 +318,42 @@ class VLLMBackend(Backend):
             return False, tool_call.error(msg)
 
 
+    def request_messages(self):
+        """The messages for the next model call."""
+        if self.memory is None:
+            return self.outgoing_messages
+        parts = [self._task_message] if self._task_message else []
+        memory_block = self.memory.render()
+        if memory_block:
+            parts.append(memory_block)
+        if self._instruction:
+            parts.append(self._instruction)
+        elif self.memory.records:
+            parts.append(self.prompt_manager.render("memory_next"))
+        return self.outgoing_messages[:self._prefix_len] + [self.user_message("\n\n".join(parts))]
+
+    def finish_pending_action(self):
+        """Summarize the last action into memory (called before the next model call)."""
+        if self.memory is not None and self._pending is not None:
+            self.memory.add(self._pending)
+            self._pending = None
+
+    def extra_log(self):
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "memory": self.memory.to_log() if self.memory is not None else None,
+        }
+
     def send(self, message: Optional[str]): # This is the customized send method
+        if self.memory is not None:
+            self.finish_pending_action()
+            if message is not None and self._task_message is None:
+                self._task_message = message
+            else:
+                self._instruction = message
         if message is not None:
             self.append(self.user_message(message))
+            self.messages.append(UserMessage(message))
 
         _, content = self.call_model()
         return content, self.last_tool_calls, 0
@@ -309,6 +365,10 @@ class VLLMBackend(Backend):
             conv_message = message
         elif isinstance(message, list) and isinstance(message[0], ToolResult):
             conv_message = self.tool_results_message(message)
+            # Log the tool outputs (they were previously missing from the conversation log).
+            self.messages.extend(message)
+            if self._pending is not None:
+                self._pending.results.extend(message)
         else:
             raise ValueError(f"Unknown message type: {type(message)}")
         # Save the message to the log we pass back to the model

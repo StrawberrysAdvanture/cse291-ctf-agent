@@ -1,0 +1,12 @@
+## Memory: summary of your previous actions
+
+{% if omitted %}
+({{ omitted }} earlier action(s) are omitted to save space.)
+
+{% endif %}
+{% for step, summary in entries %}
+### Action {{ step }}
+{{ summary }}
+
+{% endfor %}
+These summaries replace the full outputs of your earlier actions, which are no longer shown. If you need a detail that a summary leaves out, run a command to get it again.

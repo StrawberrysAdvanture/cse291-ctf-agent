@@ -272,6 +272,10 @@ class Backend(ABC):
     def get_system_message(self):
         raise NotImplementedError
 
+    def extra_log(self) -> dict:
+        """Backend-specific fields to add to the conversation log."""
+        return {}
+
 class NotGiven:
     pass
 NOT_GIVEN = NotGiven()
