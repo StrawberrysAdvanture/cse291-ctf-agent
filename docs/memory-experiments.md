@@ -14,8 +14,12 @@ options:
 | Config | Summarizer | Options on | Extra model calls |
 |---|---|---|---|
 | `config/qwen_memory.yaml` (v1) | `llm` | none | 1 per action |
-| `config/qwen_memory_mask.yaml` | `mask` | raw tail, merge | none |
-| `config/qwen_memory_v2.yaml` | `llm` | raw tail, long-output threshold, saved outputs, facts, task-aware summarizer, merge | 1 per action longer than the threshold |
+| `config/qwen_memory_mask.yaml` (M1) | `mask` | raw tail, merge | none |
+| `config/qwen_memory_llm.yaml` (M2) | `llm` | raw tail, long-output threshold, task-aware summarizer, merge | 1 per action longer than the threshold |
+| `config/qwen_memory_facts.yaml` (M3) | `mask` | raw tail, facts, saved outputs, merge | none |
+| `config/qwen_memory_v2.yaml` | `llm` | everything above | 1 per action longer than the threshold |
+
+M1–M3 are the three memory baselines proposed for the decision in [`memory-baselines.md`](memory-baselines.md).
 
 Compare any two runs with `python scripts/paired_analysis.py <logs A> <logs B>`; it reports paired
 solve rates, finish reasons, prompt tokens, repeated commands and summary compression.

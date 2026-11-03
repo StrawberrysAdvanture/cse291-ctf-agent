@@ -41,8 +41,7 @@ demostration:
 
 
 
-# Observation masking (docs/memory-experiments.md, experiments 1, 2 and 7): no extra model
-# calls. Past outputs are replaced by a placeholder, the latest action is shown in full, and
+# Memory baseline M1 (docs/memory-baselines.md): observation masking, no extra model calls. Past outputs are replaced by a placeholder, the latest action is shown in full, and
 # old entries are merged into one-line records instead of being dropped.
 memory:
   enabled: true
