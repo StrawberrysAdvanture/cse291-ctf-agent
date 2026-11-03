@@ -67,7 +67,9 @@ class CTFConversation:
                 break
             except openai.BadRequestError as e:
                 msg = str(e)
-                if "'code': 'context_length_exceeded'" in msg or "'code': 'string_above_max_length'" in msg:
+                # OpenAI reports an error code; vLLM only says "maximum context length" in the message.
+                if ("'code': 'context_length_exceeded'" in msg or "'code': 'string_above_max_length'" in msg
+                        or "maximum context length" in msg):
                     status.print("[red bold]Context length exceeded![/red bold]", markup=True)
                     self.finish_reason = "context_length"
                     break

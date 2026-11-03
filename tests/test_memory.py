@@ -204,3 +204,23 @@ def test_summarizer_failure_falls_back_to_truncation(tmp_path):
 def test_unknown_summarizer_is_rejected():
     with pytest.raises(ValueError):
         ActionMemory.from_config({"enabled": True, "summarizer": "magic"}, None, MODEL, PromptManager())
+
+
+def test_vllm_context_length_error_ends_run_with_context_length(tmp_path):
+    import httpx
+    import openai
+
+    class OverflowClient(FakeClient):
+        def create(self, model, messages, **kwargs):
+            if len(self.agent_requests) >= 1:
+                request = httpx.Request("POST", "http://x/v1/chat/completions")
+                response = httpx.Response(400, request=request)
+                raise openai.BadRequestError(
+                    "Error code: 400 - {'object': 'error', 'message': \"This model's maximum context "
+                    "length is 4096 tokens. However, you requested 5000 tokens.\", 'code': 400}",
+                    response=response, body=None)
+            return super().create(model, messages, **kwargs)
+
+    client = OverflowClient(REPLIES)
+    _, log = run_conversation(tmp_path, {}, client, [BIG_OUTPUT])
+    assert log["finish_reason"] == "context_length"
