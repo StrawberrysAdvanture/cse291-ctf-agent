@@ -45,14 +45,27 @@ possibly-memorized; 0 suspicious accesses; the re-score **agreed with the harnes
 
 ## 3. Results
 
+| Set | Attempts | Solved (att.) | Challenges ≥1 | Mean rounds | Mean wall (s) | Mean tokens/att. | Peak ctx (tok) |
+|---|---|---|---|---|---|---|---|
+| Development | 30 | 0 (0.0%) | 0/10 | 18.2 | 586 | 189.7k | 17,568 |
+| Held-out | 60 | 1 (1.7%) | 1/20 | 18.4 | 544 | 169.4k | 16,294 |
+| Pilot | 3 | 1 (33%) | 1/3 | 14.0 | 284 | 131.2k | 11,572 |
+
 - **Solve rate: held-out 1.7% of attempts, 1/20 challenges** (`2023q-rev-baby_s_third`, rev);
-  **development 0%, 0/10**; pilot 1/3. Every category is 0 except held-out rev 1/4.
+  **development 0%, 0/10**; pilot 1/3. Every category is 0 except held-out **rev 1/4**.
 - **Not reliable:** the one solve occurred on only **1 of its 3 attempts** (solved in 7 rounds;
-  `max_rounds` on the other two) — expected at temperature 0.6.
+  `max_rounds` on the other two) — expected at temperature 0.6, and a reminder that a single success
+  is within run-to-run noise rather than a stable capability.
 - **Cost / effort:** ~**$9.4** total GPU (~11 g6-hours), well under the $20/day, $200 caps;
   ~540–590 s and ~170–190k cumulative tokens per attempt; peak single-call context ~16–18k of 32k.
-- Full per-set and per-category tables, latency, invalid-command, timeout, and context-growth
-  measurements, and the outcome/context figures, are in Appendices B–C.
+- **Tool vs. model time, cold vs. steady:** tool-call latency is negligible (median **0.05 s**),
+  so wall time is almost entirely model generation; the only slow tool is Ghidra (up to **30 s**,
+  a cold-start cost on the first decompile/disassemble of a binary). The ~30 s vLLM load is a
+  one-time server cost excluded from per-attempt timing.
+- **Execution pathologies (previewing §4):** across 1,647 model rounds, **57%** produced no
+  executed tool call, **~50%** of replies hit the 1,024-token cap, and ~**1,160** tool calls
+  repeated an earlier action. Full per-category tables, timeout/invalid-command breakdowns, and the
+  outcome/context figures are in Appendices B–C.
 
 ## 4. Failure analysis
 
@@ -99,7 +112,7 @@ held-out challenges only.
 - **Open question:** whether a *capability*-side aid (verified-findings memory to cut repeats, or
   targeted tool/prompt scaffolding) moves the needle where interface fixes alone did not.
 
----
+<div class="pagebreak"></div>
 
 ## Appendix A — Reproducibility
 
@@ -113,16 +126,13 @@ held-out challenges only.
 - **Reproduce:** `experiments/phase1/run_batch.py --set {dev,heldout} --attempts 3 --config
   experiments/phase1/qwen_phase1.yaml`; score with `analysis/score.py logs/phase1 <dataset_dir>`.
 
-## Appendix B — Results by set and category
+## Appendix B — Results by category
 
-| Set | Attempts | Solved (att.) | Challenges ≥1 | Mean rounds | Mean wall (s) | Mean tokens/att. | Peak ctx (tok) |
-|---|---|---|---|---|---|---|---|
-| Development | 30 | 0 (0.0%) | 0/10 | 18.2 | 586 | 189.7k | 17,568 |
-| Held-out | 60 | 1 (1.7%) | 1/20 | 18.4 | 544 | 169.4k | 16,294 |
-| Pilot | 3 | 1 (33%) | 1/3 | 14.0 | 284 | 131.2k | 11,572 |
-
-Solves by category (held-out): rev **1/4**; crypto, forensics, misc, pwn, web all 0. Development: all
-0. Per-category means are in `results/phase1/by_category.csv`.
+Solves by category: held-out **rev 1/4**; crypto (0/4), forensics (0/3), misc (0/2), pwn (0/4), web
+(0/3) all 0. Development: all 0 across crypto, forensics, misc, pwn, rev. The per-set summary table
+is in §3; full per-category means (rounds, wall time, tokens, invalid commands, repeats, finish
+reasons) are in `results/phase1/by_category.csv`. The hardest categories by wasted budget were pwn
+and crypto (most invalid commands and repeats per attempt); rev produced the only solve.
 
 ## Appendix C — Execution measurements
 
