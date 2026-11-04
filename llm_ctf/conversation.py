@@ -40,7 +40,15 @@ class CTFConversation:
 
     def __enter__(self):
         self.backend.setup()
-        self.challenge.start_challenge_container()
+        try:
+            self.challenge.start_challenge_container()
+        except subprocess.CalledProcessError as e:
+            # nyuctf runs `docker compose up` with its output captured; show why it failed.
+            status.print(f"[red bold]Challenge services failed to start (exit code {e.returncode})[/red bold]", markup=True)
+            for stream in (e.stdout, e.stderr):
+                if stream:
+                    status.print(stream.decode(errors="replace") if isinstance(stream, bytes) else str(stream))
+            raise
         self.environment.setup()
 
         self.start_time = now()

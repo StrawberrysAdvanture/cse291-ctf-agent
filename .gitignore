@@ -6,7 +6,7 @@ test.sh
 # The work log and curated experiment records under logs/ are tracked.
 /logs/*
 !/logs/README.md
-!/logs/worklog-*.md
+!/logs/*.md
 !/logs/runs/
 __pycache__/
 *.py[cod]
