@@ -98,20 +98,29 @@ low-level fixes (treat overflow as `context_length`; cap oversized outputs).
 
 ## 5. Phase 2 direction
 
-Category (4) is capability-bound, but (1)–(3) show **half the budget is wasted before capability is
-tested**. Phase 2 targets that waste and tests whether recovering it helps, with controlled
-comparisons against the simple agent **and** fixed retries at equal budget, plus an ablation, on
-held-out challenges only.
+§4 leaves two competing hypotheses: **(H1) waste-bound** — recovering the ~57% dead rounds and the
+~1,160 repeats raises solves — versus **(H2) capability-bound** — a 7B model cannot do the required
+exploitation regardless. The cross-validation (0/57 even with every mechanical fix, but at only 3
+rounds) hints at H2; our 20-round budget leaves room for H1. Phase 2 is designed to distinguish them,
+so that *either* outcome is a result.
 
-- **Primary — output budgeting / tool-feedback compaction:** cap each tool result (head + tail +
-  re-read note) so one large output cannot overflow context. *Preliminary (branch
-  `phase2-outputcap`):* a seed-matched held-out A/B (8k-char cap) **cut `context_length` failures
-  7 → 3** with **no lost solves**; dev blowouts fell 3 → 1. No blowout converted to a solve —
-  consistent with §4.
-- **Secondary — lenient tool-call parsing:** recover the ~57% dead rounds from format slips, making
-  the budget productive and the baseline fairer.
-- **Open question:** whether a *capability*-side aid (verified-findings memory to cut repeats, or
-  targeted tool/prompt scaffolding) moves the needle where interface fixes alone did not.
+- **Primary — structured working memory.** Give the agent a persistent, compact state each round
+  instead of the raw transcript: a **deduplicated action ledger** (one line per distinct command and
+  its outcome) to curb repeats; a **pinned facts block** (exact hashes, decoded strings, addresses,
+  and paths extracted from tool output) that survives summarization so values are not re-derived; and
+  the **latest output verbatim** with older turns condensed. Repeats are suppressed *structurally* —
+  serving the cached result for an identical call and emitting one call per reply — since a passive
+  "you already ran this" note was found to *increase* repeats, not reduce them.
+- **Retained as hygiene (not the improvement under study):** output-capping, which removed the
+  `context_length` crash mode at **no solve cost** (§4) and bounds the memory summarizer's inputs,
+  plus lenient parsing to recover format-slip rounds. Neither is expected to add solves on its own.
+- **Controls & ablations:** compared against the simple agent **and** fixed retries at equal total
+  budget (the one solve occurred on 1 of 3 attempts, so apparent gains could be sampling); ablate
+  facts-only vs. ledger-only vs. full memory; optionally probe the **capability ceiling** by running
+  the same memory-augmented harness with a larger model on development.
+- **Metrics:** solve rate, plus *effective rounds* (executed, non-repeated tool calls), repeat rate,
+  and distinct commands per attempt — so a flat solve rate (H2) still yields a precise account of
+  what memory fixed and why it was not sufficient. Evaluated on held-out challenges only.
 
 <div class="pagebreak"></div>
 
