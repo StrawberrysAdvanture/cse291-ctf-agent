@@ -65,6 +65,16 @@ def main():
                              "note: run it and add a note to the result; skip: return the earlier "
                              "result without running it. Overrides the config's "
                              "parameter.repeat_detection (default off).")
+    parser.add_argument("--lenient-tool-calls", choices=["on", "off"], default=None,
+                        help="accept an <invoke> block without the <function_calls> wrapper and "
+                             "schema-style parameters as a tool call (issue I11). Overrides "
+                             "parameter.lenient_tool_calls (default off). vllm backend only.")
+    parser.add_argument("--stop-after-first-call", choices=["on", "off"], default=None,
+                        help="stop generation after the first </invoke>, so each reply makes one "
+                             "tool call. Overrides parameter.stop_after_first_call (default off).")
+    parser.add_argument("--max-output-chars", type=int, default=None,
+                        help="cap each tool output at this many characters, keeping the head and "
+                             "the tail (issue I12). Overrides parameter.max_output_chars (default 0, no cap).")
     parser.add_argument("--no-tool-nudge", choices=["on", "off"], default=None,
                         help="after a reply with no tool call, send a message that restates the "
                              "tool-call format with an example instead of 'Please proceed...'. "
@@ -114,6 +124,13 @@ def main():
         args.repeat_detection = str(config_parameter.get("repeat_detection", "off")).lower()
     if args.repeat_detection not in ("off", "note", "skip"):
         parser.error(f"parameter.repeat_detection must be off, note or skip, not {args.repeat_detection!r}")
+    for name in ("lenient_tool_calls", "stop_after_first_call"):
+        value = getattr(args, name)
+        setattr(args, name, bool(config_parameter.get(name, False)) if value is None else value == "on")
+    if args.max_output_chars is None:
+        args.max_output_chars = int(config_parameter.get("max_output_chars", 0) or 0)
+    if args.max_output_chars < 0:
+        parser.error("max_output_chars must be 0 (no cap) or a positive number")
     if args.no_tool_nudge is None:
         args.no_tool_nudge = bool(config_parameter.get("no_tool_nudge", False))
     else:
@@ -180,7 +197,8 @@ def main():
                     )
 
     with CTFConversation(environment, challenge, prompt_manager, backend, logfile, max_rounds=args.max_rounds, max_cost=args.max_cost, args=args,
-                         repeat_detection=args.repeat_detection, no_tool_nudge=args.no_tool_nudge) as convo:
+                         repeat_detection=args.repeat_detection, no_tool_nudge=args.no_tool_nudge,
+                         max_output_chars=args.max_output_chars) as convo:
         convo.run()
 
 if __name__ == "__main__":

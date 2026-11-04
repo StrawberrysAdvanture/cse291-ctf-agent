@@ -2,6 +2,8 @@
 
 Qualitative read of the 47 logs in `logs/NYU_Baseline_0/*.json`, alongside the quantitative `report.md`. Counts are over 47 logs, 181 replies, 261 tool calls unless stated. Produced by a review agent on 2026-11-04; the tabulation scripts were run in a scratch directory and are not kept.
 
+Reading the logs: for an assistant message that registered tool calls, the `content` field holds only the text before the tool-call block (the extracted "thought"); the model's raw reply is under `extra.response.data.choices[0].message.content`. For a reply with no registered call, `content` is the whole reply. `scripts/recover_lost_calls.py` shows what lenient parsing (issue I11) would have accepted from these replies: all 69 unwrapped blocks and all 26 schema-style calls (`lenient-parsing-recovery.md`).
+
 ## Summary: dominant failure modes, most frequent first
 
 1. Malformed tool-call syntax is the biggest single loss: 69 of 101 no-tool replies contain a full `<invoke>` block missing the `<function_calls>` wrapper, so nothing runs.

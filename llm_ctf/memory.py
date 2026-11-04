@@ -394,7 +394,8 @@ class ContainerOutputStore:
         self.output_dir = output_dir
 
     def save(self, step: int, index: int, tr: ToolResult) -> Optional[Tuple[str, str, int]]:
-        text = result_text(tr)
+        full = getattr(tr, "full_result", None)   # set by the harness output cap (issue I12)
+        text = result_text(ToolResult(tr.name, tr.id, full)) if full else result_text(tr)
         container = self.container_getter()
         if not text or not container:
             return None

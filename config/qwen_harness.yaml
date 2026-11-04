@@ -11,7 +11,9 @@ parameter:
   model: "Qwen/Qwen2.5-7B-Instruct"
   # Harness options (issues I1 and I9); both are off in config/qwen_baseline.yaml.
   repeat_detection: note   # off | note | skip. note: run a repeated call again and tell the model it was a repeat
-  no_tool_nudge: true      # after a reply with no tool call, restate the tool-call format with an example
+  no_tool_nudge: true         # after a reply with no tool call, restate the tool-call format with an example
+  lenient_tool_calls: true    # issue I11: accept <invoke> without the wrapper and schema-style parameters
+  max_output_chars: 20000     # issue I12: cap each tool output (head and tail kept)
 
 prompts:
   system: |

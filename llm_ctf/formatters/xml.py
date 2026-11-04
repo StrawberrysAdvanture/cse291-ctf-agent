@@ -99,8 +99,15 @@ class XMLFormatter(Formatter):
             for tc in tool_calls
         ]) + f"\n{TOOL_USE_STOP}\n"
 
+    # Set by the backend (issue I11). When true, a bare <invoke> counts as the start of the
+    # tool calls and schema-style parameters (<parameter><name>x</name><value>v</value>) are accepted.
+    lenient = False
+
     def extract_content(self, message) -> str:
-        content = re.split(r'(```xml\s*)?' + re.escape(TOOL_USE_START), message)[0].strip()
+        marker = re.escape(TOOL_USE_START)
+        if self.lenient:
+            marker = "(?:" + marker + "|<invoke>)"
+        content = re.split(r'(```xml\s*)?' + marker, message)[0].strip()
         if not content: content = None
         return content
 
@@ -111,6 +118,18 @@ class XMLFormatter(Formatter):
             if elem := invocation.find(param_name):
                 value = elem.text
                 extracted_parameters[param_name] = value
+        if self.lenient:
+            # The model sometimes writes the tool-description schema inside the invoke:
+            # <parameter><name>command</name><type>string</type><value>ls</value></parameter>,
+            # or just <name>command</name> followed by <value>ls</value>.
+            for name_elem in invocation.find_all("name"):
+                name = name_elem.text.strip()
+                if name not in tool.parameters or name in extracted_parameters:
+                    continue
+                container = name_elem.parent if name_elem.parent is not None and name_elem.parent.name == "parameter" else invocation
+                value_elem = container.find("value") if container is not invocation else name_elem.find_next("value")
+                if value_elem is not None:
+                    extracted_parameters[name] = value_elem.text
         parsed_tc = ToolCall.create_parsed(tc.name, tc.id, extracted_parameters)
         self.validate_args(tool, parsed_tc)
         self.convert_args(tool, parsed_tc)

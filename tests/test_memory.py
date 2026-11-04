@@ -83,13 +83,13 @@ def fake_challenge():
               start_challenge_container=lambda: None, stop_challenge_container=lambda: None)
 
 
-def run_conversation(tmp_path, memory_config, client, outputs, rounds=2, **convo_kwargs):
+def run_conversation(tmp_path, memory_config, client, outputs, rounds=2, args_extra=None, **convo_kwargs):
     # The loop runs while rounds <= max_rounds, so max_rounds=2 gives three model calls.
     config = yaml.safe_load(open("config/qwen_baseline.yaml"))
     challenge = fake_challenge()
     environment = FakeEnvironment(challenge, outputs)
     prompt_manager = PromptManager(config=config)
-    args = Namespace(hints=[], debug=False, memory_config=memory_config, model=MODEL)
+    args = Namespace(hints=[], debug=False, memory_config=memory_config, model=MODEL, **(args_extra or {}))
     VLLMBackend.client_setup = lambda self: setattr(self, "client", client)
     backend = VLLMBackend(prompt_manager.system_message(challenge), "", environment.available_tools,
                           prompt_manager, model=MODEL, args=args)

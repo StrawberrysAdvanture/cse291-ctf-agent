@@ -34,7 +34,11 @@ Two options address issues I1 and I9 in `logs/issues.md`; both are off by defaul
 - `--repeat-detection note` (or `parameter.repeat_detection: note` in a config): when a tool call repeats an earlier call with the same arguments, the call runs again and its result gains a `note` ("Same call as in round N; the output is identical."). `skip` returns the earlier result without running the call; that can be stale if the container changed in between, so prefer `note`.
 - `--no-tool-nudge on` (`parameter.no_tool_nudge: true`): after a reply with no tool call, the harness sends a message that restates the tool-call format with an example instead of "Please proceed to the next step". The prompt is `no_tool_call` and can be overridden in the config's `prompts` section.
 
-`config/qwen_harness.yaml` turns both on. Every conversation log now records `repeat_detection` (mode, count, one entry per repeat) and `no_tool_call` (rounds without a tool call, nudges sent), in every mode.
+- `--lenient-tool-calls on` (`parameter.lenient_tool_calls: true`): accept an `<invoke>` block without the `<function_calls>` wrapper, and parameters written as `<parameter><name>command</name><value>…</value></parameter>`, as tool calls (issue I11). In the 32k baseline, 69 of 101 replies without a tool call were such blocks.
+- `--stop-after-first-call on` (`parameter.stop_after_first_call: true`): add `</invoke>` as a stop sequence, so each reply makes one tool call and the model sees its result before the next.
+- `--max-output-chars N` (`parameter.max_output_chars: N`, 0 = no cap): shorten every tool output longer than N characters, keeping the head and the tail, with a note saying how much was cut (issue I12). The memory option `save_outputs` still saves the full output.
+
+`config/qwen_harness.yaml` turns on repeat detection (`note`), the nudge, lenient parsing and a 20,000-character cap. Every conversation log records `repeat_detection`, `no_tool_call`, `tool_call_parsing` and `output_cap`, in every mode.
 
 ## Running on AWS
 

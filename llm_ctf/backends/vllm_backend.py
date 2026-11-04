@@ -46,6 +46,12 @@ class VLLMBackend(Backend):
         self.formatter : Formatter = Formatter.from_name("xml")(tools, prompt_manager)
         self.tools = tools
         self.args = args
+        # Issue I11: accept an <invoke> block without the <function_calls> wrapper and
+        # schema-style parameters, and optionally stop generation after the first call.
+        # Both off by default; with them off the request and the parsing are unchanged.
+        self.lenient_tool_calls = bool(getattr(args, "lenient_tool_calls", False))
+        self.stop_after_first_call = bool(getattr(args, "stop_after_first_call", False))
+        self.formatter.lenient = self.lenient_tool_calls
 
         if model:
             if model not in self.MODELS:
@@ -240,15 +246,35 @@ class VLLMBackend(Backend):
         if usage is not None and getattr(usage, "prompt_tokens", None) is not None:
             self.prompt_tokens.append(usage.prompt_tokens)
         # Check if the model wants to run more tools and add the stop sequence
-        if response.choices[0].finish_reason == "stop" and any(s in response.choices[0].message.content for s in start_seqs):
+        choice = response.choices[0]
+        if self.lenient_tool_calls or self.stop_after_first_call:
+            text = choice.message.content or ""
+            has_start = any(s in text for s in start_seqs)
+            # Lenient: a start marker is enough, even when the reply hit the token cap
+            # (a bare <invoke> never reaches the </function_calls> stop sequence).
+            if has_start and (self.lenient_tool_calls or choice.finish_reason == "stop"):
+                choice.message.content = self.close_tool_call_tags(text)
+                has_tool_calls = True
+            else:
+                has_tool_calls = False
+        elif choice.finish_reason == "stop" and any(s in choice.message.content for s in start_seqs):
             # Add the stop sequence to the content
-            response.choices[0].message.content += "\n" + stop_seqs[0] + "\n"
+            choice.message.content += "\n" + stop_seqs[0] + "\n"
             has_tool_calls = True
         else:
             has_tool_calls = False
         message = response.choices[0].message
         content = message.content
         return response, content, message, has_tool_calls
+
+    @staticmethod
+    def close_tool_call_tags(text: str) -> str:
+        """Re-add closing tags removed by a stop sequence or cut off by the token cap."""
+        if text.count("<invoke>") > text.count("</invoke>"):
+            text += "\n</invoke>"
+        if "<function_calls>" in text and "</function_calls>" not in text:
+            text += "\n</function_calls>\n"
+        return text
 
     # TODO: make generation parameters configurable
     def call_model(self):
@@ -258,6 +284,10 @@ class VLLMBackend(Backend):
             stop_seqs = self.quirks.augment_stop_sequences(stop_seqs)
         if self.quirks.augment_start_sequences:
             start_seqs = self.quirks.augment_start_sequences(start_seqs)
+        if self.lenient_tool_calls:
+            start_seqs = start_seqs + ["<invoke>"]
+        if self.stop_after_first_call:
+            stop_seqs = stop_seqs + ["</invoke>"]
 
         # Make the actual call to the LLM
         original_response, original_content, message, has_tool_calls = self.call_model_internal(start_seqs, stop_seqs)
@@ -344,6 +374,8 @@ class VLLMBackend(Backend):
     def extra_log(self):
         return {
             "prompt_tokens": self.prompt_tokens,
+            "tool_call_parsing": {"lenient": self.lenient_tool_calls,
+                                  "stop_after_first_call": self.stop_after_first_call},
             "memory": self.memory.to_log() if self.memory is not None else None,
             "memory_facts": self.memory.facts_log() if self.memory is not None else None,
         }

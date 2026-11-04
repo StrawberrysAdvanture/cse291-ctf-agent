@@ -20,7 +20,8 @@ now = lambda: time.time()
 
 class CTFConversation:
     def __init__(self, environment: CTFEnvironment, challenge: CTFChallenge, prompt_manager: PromptManager, backend: Backend, logfile: Path, max_rounds:int=30, max_cost:float=1.0, args=None,
-                 repeat_detection: str = "off", no_tool_nudge: bool = False):
+                 repeat_detection: str = "off", no_tool_nudge: bool = False,
+                 max_output_chars: int = 0):
         self.challenge = challenge
         self.environment = environment
         self.prompt_manager = prompt_manager
@@ -36,6 +37,11 @@ class CTFConversation:
 
         # Repeated tool calls (llm_ctf/repeats.py): always counted, acted on when the mode is not "off".
         self.repeats = RepeatDetector(repeat_detection)
+        # Issue I12: cap every string field of a tool result at this many characters
+        # (0 = no cap, the baseline). The full result is kept on the ToolResult for
+        # memory's save_outputs but is not sent to the model or written to the log.
+        self.max_output_chars = int(max_output_chars or 0)
+        self.outputs_capped = 0
         # Replies without a tool call: with the nudge on, the next message restates the
         # tool-call format with an example instead of the plain keep-going text.
         self.no_tool_nudge = no_tool_nudge
@@ -179,6 +185,9 @@ class CTFConversation:
                 status.debug_message(f"Error running {tool.name}: {e}")
                 tool_res = tool_call.error(f"{type(e).__name__} running {tool.name}: {e}")
 
+            if self.max_output_chars:
+                tool_res = self.cap_output(tool_res)
+
             clean_result = tool_res.result
             if previous is not None:
                 identical = clean_result == previous["result"]
@@ -198,6 +207,30 @@ class CTFConversation:
             self.repeats.remember(key, self.rounds, clean_result)
             tool_results.append(tool_res)
         return tool_results
+
+    def cap_output(self, tool_res: ToolResult) -> ToolResult:
+        """Shorten string fields longer than max_output_chars, keeping the head and the tail."""
+        limit = self.max_output_chars
+        capped = {}
+        changed = False
+        for key, value in tool_res.result.items():
+            if isinstance(value, str) and len(value) > limit:
+                head = limit * 2 // 3
+                tail = limit - head
+                omitted = len(value) - limit
+                capped[key] = (value[:head]
+                               + f"\n[... {omitted} of {len(value)} characters omitted by the harness; "
+                                 "re-run the command through head, tail, sed -n or grep to see other parts ...]\n"
+                               + value[-tail:])
+                changed = True
+            else:
+                capped[key] = value
+        if changed:
+            self.outputs_capped += 1
+            tool_res.full_result = tool_res.result
+            tool_res.result = capped
+            status.debug_message(f"Output of {tool_res.name} capped at {limit} characters")
+        return tool_res
 
     def run_conversation_step(self, message: Optional[str]=None):
         # Any message after the first one is the reply to a round without a tool call.
@@ -263,6 +296,7 @@ class CTFConversation:
                 # "exception_info": exception_info,
                 "finish_reason": self.finish_reason,
                 "repeat_detection": self.repeats.to_log(),
+                "output_cap": {"max_output_chars": self.max_output_chars, "outputs_capped": self.outputs_capped},
                 "no_tool_call": {
                     "nudge": self.no_tool_nudge,
                     "count": len(self.no_tool_rounds),
