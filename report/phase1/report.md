@@ -3,7 +3,8 @@ Phase 1 report DRAFT. Main body (§1-5) kept under 2 pages; figures, full metric
 tables, and reproduction details live in the appendix.
 Numbers from: results/phase1/{by_set,by_category,attempts,tool_calls}.csv;
 analysis/score.py over logs/phase1; teammate branch cross-validation (aws-gpu-runner).
-TODO before submission: confirm final commit hash; export to PDF.
+TODO before submission: confirm final commit hash.
+Build the styled PDF with: ./build-pdf.sh  (uses report.css; needs pandoc + Chrome).
 -->
 
 # Resource-Bounded CTF Agents — Phase 1 Baseline
