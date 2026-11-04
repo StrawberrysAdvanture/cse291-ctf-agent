@@ -11,7 +11,7 @@ sanitized traces + answer keys out of the public repo.
 
 # Resource-Bounded CTF Agents — Phase 1 Baseline
 
-**Team:** Steven Zhang · [co-authors] · **Option 7** · **Repo:** github.com/StrawberrysAdvanture/cse291-ctf-agent (branch `baseline-local-qwen`, commit `0ccb3f8`)
+**Team:** Steven Zhang, Benjamin Yu, Jackie Liu · **Option 7** · **Repo:** https://github.com/StrawberrysAdvanture/cse291-ctf-agent
 
 **Research question.** How well does a *small, self-hosted* model (7B, 4-bit, on a single
 mid-range GPU) solve CTF challenges under a fixed step and token budget, and **what limits it** —
@@ -153,7 +153,7 @@ budget, with an ablation, on held-out challenges only.
 
 - **Phase 1 (done, Nov 4):** harness instrumentation, network isolation, independent scoring,
   reproducible dev + held-out runs (3 attempts each, fixed commit), execution measurements, and
-  failure analysis. Repo: `baseline-local-qwen` @ `0ccb3f8`.
+  failure analysis. Code, configs, results, and logs: see the repository above.
 - **Nov 4:** output-capping experiment complete (dev + held-out); results in §5.
 - **[~Nov 20]:** Phase 2 mechanism finalized + ablation + fixed-retries baseline on held-out.
 - **[~Dec 5]:** full held-out evaluation, variability runs, write-up.
