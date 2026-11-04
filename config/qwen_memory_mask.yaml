@@ -5,10 +5,20 @@ experiment:
 
 
 parameter:
-  max_rounds: 3
+  # Memory variants get the benchmark's 30 rounds; the no-memory reference keeps 3
+  # (docs/memory-baselines.md: the comparison to it is a sanity check only).
+  max_rounds: 30
   max_cost: 3
   backend: "vllm"
   model: "Qwen/Qwen2.5-7B-Instruct"
+  # Harness options, the same as config/qwen_harness_v2.yaml (issues I1, I9, I11, I12, I13).
+  repeat_detection: skip_identical   # run a repeated call once more; stop re-running it once its output was identical
+  no_tool_nudge: true
+  lenient_tool_calls: true
+  stop_after_first_call: true        # one tool call per reply: ends the invoke pile-ups and same-reply repeats
+  max_output_chars: 20000
+  max_output_tokens: 3000            # estimated tokens per output (llm_ctf/tokens.py); dense hex counts more per character
+  max_reply_output_tokens: 6000      # all outputs of one reply together
 
 prompts:
   system: |

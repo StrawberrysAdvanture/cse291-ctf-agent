@@ -8,8 +8,10 @@ import json
 
 import pytest
 
+from llm_ctf.formatters.xml import XMLFormatter
 from llm_ctf.prompts.prompts import PromptManager
 from llm_ctf.repeats import RepeatDetector, call_key
+from llm_ctf.tokens import estimate_tokens
 from llm_ctf.tools import ToolCall
 
 from test_memory import (FakeClient, FakeEnvironment, fake_challenge, run_conversation,
@@ -129,6 +131,47 @@ def test_repeated_wrong_flag_is_a_repeat(tmp_path):
     first, second = tool_messages(log)
     assert first == {"correct": False}
     assert second == {"correct": False, "note": "Same call as in round 1; the output is identical."}
+
+
+LS_THRICE = LS_TWICE + [tool_call_reply("ls", "And once more.")]
+
+
+def test_skip_identical_stops_rerunning_after_an_identical_repeat(tmp_path):
+    client = SnapshotClient(LS_THRICE)
+    # Only two outputs: the third call must be served from the store, or run_cmd fails.
+    _, log = run_conversation(tmp_path, {}, client, ["same", "same"], rounds=2, repeat_detection="skip_identical")
+    first, second, third = tool_messages(log)
+    assert "note" not in first
+    assert second["note"] == "Same call as in round 1; the output is identical."
+    assert third["stdout"] == "same"
+    assert third["note"] == ("Same call as in round 2; it has produced identical output 2 times, "
+                             "so it was not run again. This is the result from round 2.")
+    assert [r["action"] for r in log["repeat_detection"]["repeats"]] == ["note", "skip"]
+    assert log["repeat_detection"]["mode"] == "skip_identical"
+    assert len(FakeEnvironment.last.commands) == 2
+
+
+def test_skip_identical_names_the_round_that_ran_and_resets_on_a_new_call(tmp_path):
+    run = tool_call_reply("python3 s.py", "Run it.")
+    client = SnapshotClient([run, run, run, run, tool_call_reply("sed -i s/a/b/ s.py", "Edit."), run])
+    _, log = run_conversation(tmp_path, {}, client, ["err", "err", "edited", "FLAG"], rounds=5,
+                              repeat_detection="skip_identical")
+    results = tool_messages(log)
+    assert [r["stdout"] for r in results] == ["err", "err", "err", "err", "edited", "FLAG"]
+    assert results[2]["note"].endswith("This is the result from round 2.")
+    assert results[3]["note"].endswith("This is the result from round 2.")   # round 3 ran nothing
+    assert results[3]["note"].startswith("Same call as in round 3; it has produced identical output 2 times")
+    assert results[5]["note"] == "Same call as in round 4; the output differs."  # ran again after the edit
+    assert [r["action"] for r in log["repeat_detection"]["repeats"]] == ["note", "skip", "skip", "note"]
+    assert [c for c, _ in FakeEnvironment.last.commands] == ["python3 s.py"] * 2 + ["sed -i s/a/b/ s.py", "python3 s.py"]
+
+
+def test_skip_identical_keeps_running_calls_whose_output_changes(tmp_path):
+    client = SnapshotClient(LS_THRICE)
+    _, log = run_conversation(tmp_path, {}, client, ["a", "b", "c"], rounds=2, repeat_detection="skip_identical")
+    assert [r["stdout"] for r in tool_messages(log)] == ["a", "b", "c"]
+    assert [r["action"] for r in log["repeat_detection"]["repeats"]] == ["note", "note"]
+    assert tool_messages(log)[2]["note"] == "Same call as in round 2; the output differs."
 
 
 @pytest.mark.parametrize("summarizer", ["truncate", "mask"])
@@ -289,14 +332,226 @@ def test_stop_after_first_call_adds_stop_sequence_and_closes_tags(tmp_path):
     assert log["tool_call_parsing"]["stop_after_first_call"] is True
 
 
+# ----------------------------------------------------------------------------- programs named as tools (issue I11)
+
+def test_program_named_as_tool_is_unknown_by_default(tmp_path):
+    client = LenientClient([invoke_reply("python3", {"command": "/home/x.py"}), tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, ["uid=0"], rounds=1)
+    assert tool_messages(log)[0] == {"error": "Unknown tool python3"}
+    assert log["rerouted_calls"] == []
+
+
+def test_lenient_runs_program_named_as_tool_through_run_command(tmp_path):
+    client = LenientClient([invoke_reply("python3", {"command": "/home/x.py", "timeout": "30"}),
+                            tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, ["ran", "uid=0"], rounds=1,
+                              args_extra={"lenient_tool_calls": True})
+    first = tool_messages(log)[0]
+    assert first["stdout"] == "ran"
+    assert first["note"] == ("There is no tool named 'python3'; the harness ran `python3 /home/x.py` "
+                             "with run_command instead.")
+    assert FakeEnvironment.last.commands == [("python3 /home/x.py", 30.0), ("id", 10.0)]
+    assert log["rerouted_calls"] == [{"round": 1, "tool_name": "python3", "command": "python3 /home/x.py"}]
+    # The log and the memory see the call that ran, not the name the model wrote.
+    logged = [m for _, m in log["messages"] if m.get("role") == "assistant"][0]["tool_calls"][0]
+    function = logged.get("function", logged)
+    arguments = function["arguments"]
+    arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+    assert function["name"] == "run_command" and arguments["command"] == "python3 /home/x.py"
+
+
+def test_lenient_reroute_of_a_repeated_call_keeps_both_notes(tmp_path):
+    call = invoke_reply("python3", {"command": "/home/x.py"})
+    client = LenientClient([call, call, call, tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, ["same", "same", "uid=0"], rounds=3,
+                              args_extra={"lenient_tool_calls": True}, repeat_detection="skip_identical")
+    first, second, third, _ = tool_messages(log)
+    assert first["note"].startswith("There is no tool named 'python3'")
+    assert second["note"] == ("There is no tool named 'python3'; the harness ran `python3 /home/x.py` with "
+                              "run_command instead. Same call as in round 1; the output is identical.")
+    assert third["stdout"] == "same" and "was not run again" in third["note"] and "python3" in third["note"]
+    assert len(FakeEnvironment.last.commands) == 3
+
+
+@pytest.mark.parametrize("tool, params, expected", [
+    ("cat", {"path": "/etc/passwd"}, ("cat /etc/passwd", 10.0)),
+    ("tshark", {"command": "tshark -r x.pcap -Y 'tcp'"}, ("tshark -r x.pcap -Y 'tcp'", 10.0)),   # not doubled
+    ("python3", {"args": "-c 'print(1)'"}, ("python3 -c 'print(1)'", 10.0)),
+    ("python3", {"file": "solve.py", "args": "--fast"}, ("python3 solve.py --fast", 10.0)),      # all parameters, file first
+    ("python3", {"command": "sudo python3 x.py"}, ("sudo python3 x.py", 10.0)),                 # program already present
+    ("bash", {"command": "ls -la"}, ("ls -la", 10.0)),                                          # shells run the command as written
+    ("python3", {"command": "x.py", "timeout": "30s"}, ("python3 x.py", 10.0)),                 # unparseable timeout dropped
+])
+def test_lenient_reroute_builds_the_command(tmp_path, tool, params, expected):
+    client = LenientClient([invoke_reply(tool, params), tool_call_reply("id", "...")])
+    run_conversation(tmp_path, {}, client, ["out", "uid=0"], rounds=1, args_extra={"lenient_tool_calls": True})
+    assert FakeEnvironment.last.commands[0] == expected
+
+
+def test_lenient_reroute_accepts_schema_style_parameters(tmp_path):
+    reply = ("Run.\n\n<function_calls>\n<invoke>\n<tool_name>python3</tool_name>\n<call_id>1</call_id>\n"
+             "<parameters>\n<parameter>\n<name>command</name>\n<type>string</type>\n<value>x.py</value>\n"
+             "</parameter>\n</parameters>\n</invoke>\n")
+    client = LenientClient([reply, tool_call_reply("id", "...")])
+    run_conversation(tmp_path, {}, client, ["out", "uid=0"], rounds=1, args_extra={"lenient_tool_calls": True})
+    assert FakeEnvironment.last.commands[0] == ("python3 x.py", 10.0)
+
+
+def test_lenient_reroute_protects_tool_names_whatever_the_category_offers():
+    # `dis` is a truncated disassemble_function even where that tool is not offered.
+    from bs4 import BeautifulSoup
+    tools = {"run_command": FakeEnvironment(fake_challenge(), []).available_tools["run_command"]}
+    formatter = XMLFormatter(tools, PromptManager())
+    formatter.lenient = True
+    for name in ("dis", "run", "run_commands", "Check_Flag", "createfil"):
+        invocation = BeautifulSoup(f"<invoke><tool_name>{name}</tool_name><parameters><path>/x</path></parameters></invoke>", "lxml").find("invoke")
+        assert formatter.reroute_unknown_call(ToolCall.create_unparsed(name, "1", invocation), tools) is None, name
+    invocation = BeautifulSoup("<invoke><tool_name>objdump</tool_name><parameters><path>/x</path></parameters></invoke>", "lxml").find("invoke")
+    assert formatter.reroute_unknown_call(ToolCall.create_unparsed("objdump", "1", invocation), tools).parsed_arguments["command"] == "objdump /x"
+
+
+@pytest.mark.parametrize("tool, params", [
+    ("run", {"command": "ls"}),            # a truncated run_command, not a program
+    ("dis", {"path": "~/ctf_files/bin"}),  # a truncated disassemble_function
+    ("ls", {"flags": "-la"}),              # no parameter that could hold the arguments
+    ("rm -rf", {"command": "/"}),          # not a program name
+])
+def test_lenient_reroute_leaves_other_unknown_tools_alone(tmp_path, tool, params):
+    client = LenientClient([invoke_reply(tool, params), tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, ["uid=0"], rounds=1, args_extra={"lenient_tool_calls": True})
+    assert tool_messages(log)[0] == {"error": f"Unknown tool {tool}"}
+    assert FakeEnvironment.last.commands == [("id", 10.0)]
+
+
 # ----------------------------------------------------------------------------- output cap (issue I12)
+
+NO_CAP = {"max_output_chars": 0, "max_output_tokens": 0, "max_reply_output_tokens": 0,
+          "outputs_capped": 0, "replies_capped": 0}
+DENSE = "\\x8f\\x00\\x3a\\x7f" * 1250      # 20000 characters of escaped bytes, as run_command returns them
+
+
+def two_calls_reply(c1, c2):
+    inv = lambda i, c: (f"<invoke>\n<tool_name>run_command</tool_name>\n<call_id>{i}</call_id>\n"
+                        f"<parameters>\n<command>{c}</command>\n</parameters>\n</invoke>\n")
+    return "Two things.\n\n<function_calls>\n" + inv(1, c1) + inv(2, c2)
+
 
 def test_output_cap_off_by_default(tmp_path):
     big = "y" * 50000
     client = SnapshotClient([tool_call_reply("cat big", "Read it."), tool_call_reply("id", "...")])
     _, log = run_conversation(tmp_path, {}, client, [big, "u"], rounds=1)
     assert tool_messages(log)[0]["stdout"] == big
-    assert log["output_cap"] == {"max_output_chars": 0, "outputs_capped": 0}
+    assert log["output_cap"] == NO_CAP
+
+
+def test_estimate_tokens_counts_dense_text_higher():
+    prose = ("the quick brown fox jumps over the lazy dog " * 100)[:4000]
+    assert 1300 <= estimate_tokens(prose) <= 1600          # about 2.8 characters per token
+    assert estimate_tokens(DENSE[:4000]) >= 3900            # about 1.0
+    assert estimate_tokens("") == 0
+    assert estimate_tokens(12345) >= 1
+
+
+def test_token_cap_shortens_dense_output_more_than_the_char_cap_would(tmp_path):
+    client = SnapshotClient([tool_call_reply("xxd f", "Dump."), tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, [DENSE, "u"], rounds=1,
+                              max_output_chars=30000, max_output_tokens=1000)
+    out = tool_messages(log)[0]["stdout"]
+    assert "characters omitted by the harness (output limit)" in out
+    assert estimate_tokens(out) <= 1000
+    assert len(out) < 2000                                  # the char cap alone would have kept all 20000
+    assert out.startswith("\\x8f") and out.endswith("\\x7f")
+    assert log["output_cap"] == {**NO_CAP, "max_output_chars": 30000, "max_output_tokens": 1000, "outputs_capped": 1}
+
+
+def test_reply_cap_bounds_all_outputs_of_one_reply_together(tmp_path):
+    big = "lorem ipsum dolor sit amet consectetur " * 300     # about 4,200 estimated tokens each
+    client = SnapshotClient([two_calls_reply("cat a", "cat b"), tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, [big, big, "u"], rounds=1,
+                              max_output_tokens=8000, max_reply_output_tokens=6000)
+    a, b, last = tool_messages(log)
+    sizes = [estimate_tokens(a["stdout"]), estimate_tokens(b["stdout"])]
+    assert sum(sizes) <= 6000 and max(sizes) <= 3000 and min(sizes) >= 2500   # an equal share each
+    assert all("per-reply output limit" in r["stdout"] for r in (a, b))
+    assert last["stdout"] == "u"
+    assert log["output_cap"]["replies_capped"] == 1 and log["output_cap"]["outputs_capped"] == 0
+
+
+def test_reply_cap_cuts_from_the_original_and_leaves_small_outputs_alone(tmp_path):
+    small = "lorem ipsum dolor sit amet consectetur " * 50   # about 700 tokens
+    client = SnapshotClient([two_calls_reply("xxd a", "cat b"), tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, [DENSE, small, "u"], rounds=1,
+                              max_output_tokens=8000, max_reply_output_tokens=3000)
+    a, b, _ = tool_messages(log)
+    assert estimate_tokens(a["stdout"]) + estimate_tokens(b["stdout"]) <= 3000
+    assert b["stdout"] == small                                           # under the level, untouched
+    assert "of 20000 characters omitted by the harness (per-reply output limit)" in a["stdout"]   # counted from the original, not from the 8000-token cut
+    assert a["stdout"].startswith("\\x8f") and a["stdout"].endswith("\\x7f")
+    assert log["output_cap"] == {**NO_CAP, "max_output_tokens": 8000, "max_reply_output_tokens": 3000,
+                                 "outputs_capped": 1, "replies_capped": 1}
+
+
+def test_reply_cap_shares_the_budget_between_equal_outputs(tmp_path):
+    inv = lambda i: (f"<invoke>\n<tool_name>run_command</tool_name>\n<call_id>{i}</call_id>\n"
+                     f"<parameters>\n<command>xxd {i}</command>\n</parameters>\n</invoke>\n")
+    reply = "Four dumps.\n\n<function_calls>\n" + "".join(inv(i) for i in range(4))
+    client = SnapshotClient([reply, tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, [DENSE] * 4 + ["u"], rounds=1,
+                              max_output_tokens=3000, max_reply_output_tokens=6000)
+    outs = [r["stdout"] for r in tool_messages(log)[:4]]
+    sizes = [estimate_tokens(o) for o in outs]
+    assert sum(sizes) <= 6000 and max(sizes) <= 1500 and min(sizes) >= 1100
+    assert all("of 20000 characters omitted" in o for o in outs)
+
+
+def test_token_cap_note_counts_from_the_original_when_both_caps_apply(tmp_path):
+    big = DENSE * 3                                                       # 60,000 characters
+    client = SnapshotClient([tool_call_reply("xxd f", "Dump."), tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {}, client, [big, "u"], rounds=1,
+                              max_output_chars=20000, max_output_tokens=3000)
+    out = tool_messages(log)[0]["stdout"]
+    assert "of 60000 characters omitted" in out
+    assert estimate_tokens(out) <= 3000 and len(out) <= 20000
+
+
+def test_shorten_tokens_never_goes_below_the_floor_but_always_terminates():
+    from llm_ctf.tokens import shorten_tokens, MIN_KEEP_TOKENS
+    for limit in (1, 40, 80, 120):
+        out = shorten_tokens(DENSE, limit, "x")
+        assert estimate_tokens(out) <= MIN_KEEP_TOKENS
+        assert "omitted by the harness (x)" in out
+    assert shorten_tokens("short", 500, "x") == "short"
+
+
+def test_identical_is_judged_on_the_full_output_not_the_capped_one(tmp_path):
+    a = "H" * 3000 + "MIDDLE-A" * 100 + "T" * 3000
+    b = "H" * 3000 + "MIDDLE-B" * 100 + "T" * 3000
+    client = SnapshotClient(LS_THRICE)
+    _, log = run_conversation(tmp_path, {}, client, [a, b, b], rounds=2,
+                              repeat_detection="skip_identical", max_output_chars=2000)
+    results = tool_messages(log)
+    assert results[1]["note"] == "Same call as in round 1; the output differs."     # the capped texts are equal
+    assert results[2]["note"] == "Same call as in round 2; the output is identical."
+    assert len(FakeEnvironment.last.commands) == 3
+
+
+def test_reply_cap_saves_the_full_output_without_notes(tmp_path, monkeypatch):
+    import llm_ctf.memory
+    from types import SimpleNamespace
+    saved = []
+
+    def fake_run(cmd, input=None, **kwargs):
+        saved.append(input)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(llm_ctf.memory, "subprocess", SimpleNamespace(run=fake_run))
+    monkeypatch.setattr(FakeEnvironment, "container", "ctr-1", raising=False)
+    big = "lorem ipsum dolor sit amet consectetur " * 300
+    client = SnapshotClient(LS_TWICE + [tool_call_reply("id", "...")])
+    _, log = run_conversation(tmp_path, {"enabled": True, "summarizer": "truncate", "save_outputs": True},
+                              client, [big, big, "u"], rounds=2, repeat_detection="note", max_reply_output_tokens=2000)
+    assert tool_messages(log)[1]["note"] == "Same call as in round 1; the output is identical."
+    assert saved[0] == big.encode() and saved[1] == big.encode()       # neither the cut nor the note
 
 
 def test_output_cap_keeps_head_and_tail_and_notes_the_cut(tmp_path):
@@ -307,7 +562,7 @@ def test_output_cap_keeps_head_and_tail_and_notes_the_cut(tmp_path):
     assert out.startswith("H" * 2000) and out.endswith("T" * 1000)
     assert "47000 of 50000 characters omitted by the harness" in out
     assert len(out) < 3300
-    assert log["output_cap"] == {"max_output_chars": 3000, "outputs_capped": 1}
+    assert log["output_cap"] == {**NO_CAP, "max_output_chars": 3000, "outputs_capped": 1}
     assert tool_messages(log)[1]["stdout"] == "u"   # short outputs untouched
     # The model saw the capped text, not the full output.
     assert not any("H" * 2500 in str(m) for m in client.agent_requests[1])

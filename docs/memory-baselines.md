@@ -68,24 +68,43 @@ model, subgoal-scoped memory, and training.
 With `max_rounds: 3` (four model calls) and a 32k context, B never reaches the context limit,
 so the arms may tie on solve rate and the decision falls to cost and repeats. Memory is meant for
 longer runs: at 10 to 30 rounds (the upstream `launch.sh` used 30), B's prompts grow to many
-thousands of tokens, where models use the middle of a long prompt poorly [45][46][48]. The
-decisive comparison is therefore **B versus the best Mi at 10 rounds**, run after the 3-round
-screening. Change `max_rounds` in the configs for that run; nothing else differs.
+thousands of tokens, where models use the middle of a long prompt poorly [45][46][48].
+
+**Decision (2026-11-04):** the memory configs run at the benchmark's **30 rounds**
+(`max_rounds: 30` in `config/qwen_memory_{mask,llm,facts}.yaml`), while the no-memory reference
+stays at 3 rounds, since a no-memory run cannot go further without overflowing. The main
+comparison is therefore **M1 vs M2 vs M3 at 30 rounds**, paired per challenge. The comparison
+to the no-memory reference is a sanity check only: it asks whether a memory variant hurts in
+the first rounds, measured as "solved within the first 4 model calls" on the 30-round logs
+(`scripts/paired_analysis.py --early-calls 4`), against `config/qwen_harness_v2.yaml` at 3 rounds.
+
+All four configs carry the same harness options (README, "Harness options"): `repeat_detection:
+skip_identical`, `no_tool_nudge`, `lenient_tool_calls` (with rerouting of programs named as
+tools), `stop_after_first_call`, 20,000 characters and 3,000 estimated tokens per output and
+6,000 per reply. The harness-fixes record (`logs/runs/20261104-050449-2c0c-harness-32k-3r/
+findings.md`) is why: without `stop_after_first_call`, half the 968 calls were duplicates
+piled into single replies, and memory cannot help a run that spends its rounds on repeats.
+The memory sizes (`max_memory_chars: 4000`, `raw_tail_chars: 2500`) were set for a 4k context
+and are an open parameter at 32k.
 
 ## Run plan
 
-The account allows two `g6.xlarge` instances at once. After the current pair (B at
-`20261103-233511-6b9b`, v1 at `20261103-233532-7780`) finishes:
+The account allows two `g6.xlarge` instances at once. Nothing below has been launched yet;
+each 57-challenge run at 30 rounds will take longer than the 3-round runs (about 1.5 h each
+at 3 rounds, so plan for several hours and `--max-hours 8`, with the 45-minute per-challenge limit).
 
 ```bash
-# Screening at 3 rounds (M1 and M3 make no extra model calls and can run together)
-./aws/ctf-aws.sh launch --gpu-mem 24 --config config/qwen_memory_mask.yaml  --challenges all
-./aws/ctf-aws.sh launch --gpu-mem 24 --config config/qwen_memory_facts.yaml --challenges all
+# Reference, 3 rounds, no memory, all harness options (optional; the 2c0c record is the nearest existing reference)
+./aws/ctf-aws.sh launch --gpu-mem 24 --config config/qwen_harness_v2.yaml --challenges all --max-hours 3
+# Memory variants at 30 rounds (M1 and M3 make no extra model calls and can run together)
+./aws/ctf-aws.sh launch --gpu-mem 24 --config config/qwen_memory_mask.yaml  --challenges all --max-hours 8
+./aws/ctf-aws.sh launch --gpu-mem 24 --config config/qwen_memory_facts.yaml --challenges all --max-hours 8
 # then
-./aws/ctf-aws.sh launch --gpu-mem 24 --config config/qwen_memory_llm.yaml   --challenges all
+./aws/ctf-aws.sh launch --gpu-mem 24 --config config/qwen_memory_llm.yaml   --challenges all --max-hours 8
 
-# Analysis, each against the no-memory run
-python scripts/paired_analysis.py logs/runs/<B>/logs logs/runs/<Mi>/logs --names baseline M1 -o logs/runs/paired-B-vs-M1.md
+# Analysis: the memory variants against each other, then each against the reference on early solves
+python scripts/paired_analysis.py logs/runs/<M1>/logs logs/runs/<M3>/logs --names M1 M3 -o logs/runs/paired-M1-vs-M3.md
+python scripts/paired_analysis.py logs/runs/<B>/logs  logs/runs/<M1>/logs --names reference M1 --early-calls 4 -o logs/runs/paired-B-vs-M1.md
 ```
 
 Each run takes about 30 minutes of setup plus the challenges (2–5 minutes each). Record every

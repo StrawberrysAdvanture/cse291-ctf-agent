@@ -61,12 +61,17 @@ class FakeClient:
 class FakeEnvironment(CTFEnvironment):
     """Real tools, but no Docker: run_command returns canned output."""
 
+    last = None   # the most recently created instance, for tests that check what ran
+
     def __init__(self, challenge, outputs):
         super().__init__(challenge, "ctfenv", "ctfnet")
         self.outputs = list(outputs)
+        self.commands = []
+        FakeEnvironment.last = self
         self.available_tools["run_command"].run_cmd = self.fake_run_cmd
 
     def fake_run_cmd(self, command, timeout):
+        self.commands.append((command, timeout))
         return {"stdout": self.outputs.pop(0), "stderr": "", "returncode": 0, "timed_out": False}
 
     def setup(self):

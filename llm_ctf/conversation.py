@@ -15,13 +15,14 @@ from .prompts.prompts import PromptManager
 from .tools import ToolCall, ToolResult, Tool, TOOLSETS
 from .environment import CTFEnvironment
 from .repeats import RepeatDetector, call_key, canonical_arguments
+from .tokens import estimate_tokens, shorten_chars, shorten_tokens, MIN_KEEP_TOKENS
 
 now = lambda: time.time()
 
 class CTFConversation:
     def __init__(self, environment: CTFEnvironment, challenge: CTFChallenge, prompt_manager: PromptManager, backend: Backend, logfile: Path, max_rounds:int=30, max_cost:float=1.0, args=None,
                  repeat_detection: str = "off", no_tool_nudge: bool = False,
-                 max_output_chars: int = 0):
+                 max_output_chars: int = 0, max_output_tokens: int = 0, max_reply_output_tokens: int = 0):
         self.challenge = challenge
         self.environment = environment
         self.prompt_manager = prompt_manager
@@ -41,7 +42,15 @@ class CTFConversation:
         # (0 = no cap, the baseline). The full result is kept on the ToolResult for
         # memory's save_outputs but is not sent to the model or written to the log.
         self.max_output_chars = int(max_output_chars or 0)
+        # Token-aware limits (llm_ctf/tokens.py estimates; 0 = off): per output, and for all
+        # outputs of one reply together, since several capped outputs in one reply overran
+        # the context in the harness-fixes run.
+        self.max_output_tokens = int(max_output_tokens or 0)
+        self.max_reply_output_tokens = int(max_reply_output_tokens or 0)
         self.outputs_capped = 0
+        self.replies_capped = 0
+        # Issue I11: invokes naming a program instead of a tool, run through run_command.
+        self.rerouted_calls: List[dict] = []
         # Replies without a tool call: with the nudge on, the next message restates the
         # tool-call format with an example instead of the plain keep-going text.
         self.no_tool_nudge = no_tool_nudge
@@ -146,10 +155,23 @@ class CTFConversation:
         for tool_call in tool_calls:
             # Tool lookup
             tool = self.environment.available_tools.get(tool_call.name)
+            rerouted_from = None
             if not tool:
-                status.debug_message(f"Unknown tool {tool_call.name}")
-                tool_results.append(tool_call.error(f"Unknown tool {tool_call.name}"))
-                continue
+                rerouted = self.backend.reroute_unknown_call(tool_call, self.environment.available_tools)
+                if rerouted is None:
+                    status.debug_message(f"Unknown tool {tool_call.name}")
+                    tool_results.append(tool_call.error(f"Unknown tool {tool_call.name}"))
+                    continue
+                # Upgrade the call in place, so the backend's log and the memory see the
+                # call that actually ran; rerouted_calls keeps the name the model wrote.
+                rerouted_from = tool_call.name
+                tool_call.function.name = rerouted.name
+                tool_call.parsed_arguments = rerouted.parsed_arguments
+                tool = self.environment.available_tools[tool_call.name]
+                self.rerouted_calls.append({"round": self.rounds, "tool_name": rerouted_from,
+                                            "command": tool_call.parsed_arguments.get("command")})
+                status.debug_message(f"No tool named {rerouted_from}; running it as {tool.name}: "
+                                     f"{tool_call.parsed_arguments.get('command')}")
 
             # Parse arguments
             parsed, tool_call = self.backend.parse_tool_arguments(tool, tool_call)
@@ -162,16 +184,29 @@ class CTFConversation:
             # result sent to the model never change an earlier log entry.
             key = call_key(tool, tool_call)
             previous = self.repeats.previous(key)
-            if previous is not None and self.repeats.mode == "skip":
+            if self.repeats.should_skip(previous):
                 last = previous["rounds"][-1]
+                ran = previous["last_run"] if previous["last_run"] is not None else last
                 result = dict(previous["result"])
-                result["note"] = (f"{self._same_call_text(last)}; it was not run again. "
-                                  f"This is the result from round {last}.")
+                notes = []
+                if rerouted_from is not None:
+                    notes.append(f"There is no tool named {rerouted_from!r}; the harness treats it as "
+                                 f"run_command `{tool_call.parsed_arguments.get('command')}`.")
+                if self.repeats.mode == "skip_identical":
+                    times = previous["identical_repeats"] + 1
+                    notes.append(f"{self._same_call_text(last)}; it has produced identical output "
+                                 f"{times} times, so it was not run again. This is the result from round {ran}.")
+                else:
+                    notes.append(f"{self._same_call_text(last)}; it was not run again. "
+                                 f"This is the result from round {ran}.")
+                result["note"] = " ".join(notes)
                 tool_res = ToolResult(tool_call.name, tool_call.id, result)
+                tool_res.clean_result = dict(previous["result"])
+                tool_res.full_result = previous["full"]
                 self.repeats.add_repeat(round_no=self.rounds, earlier_rounds=previous["rounds"], tool=tool.name,
                                         arguments=canonical_arguments(tool, tool_call.parsed_arguments),
                                         action="skip", identical=None)
-                self.repeats.remember(key, self.rounds, previous["result"])
+                self.repeats.remember(key, self.rounds, previous["result"], full=previous["full"], ran=False)
                 status.print(f"\n[Repeat] {tool.name}: {self._same_call_text(last).lower()}; not run again", style="magenta bold")
                 tool_results.append(tool_res)
                 continue
@@ -185,52 +220,114 @@ class CTFConversation:
                 status.debug_message(f"Error running {tool.name}: {e}")
                 tool_res = tool_call.error(f"{type(e).__name__} running {tool.name}: {e}")
 
-            if self.max_output_chars:
+            if self.max_output_chars or self.max_output_tokens:
                 tool_res = self.cap_output(tool_res)
 
+            # Notes are added to a copy, so the stored result (served again on a skip and
+            # kept for the log) stays free of them. "Identical" is judged on the full
+            # output, before any cap shortened it.
             clean_result = tool_res.result
+            tool_res.clean_result = clean_result
+            full_result = getattr(tool_res, "full_result", None) or clean_result
+            notes = []
+            if rerouted_from is not None:
+                notes.append(f"There is no tool named {rerouted_from!r}; the harness ran "
+                             f"`{tool_call.parsed_arguments.get('command')}` with run_command instead.")
+            identical = False
             if previous is not None:
-                identical = clean_result == previous["result"]
+                identical = full_result == previous["full"]
                 last = previous["rounds"][-1]
+                noting = self.repeats.mode in ("note", "skip_identical")
                 self.repeats.add_repeat(round_no=self.rounds, earlier_rounds=previous["rounds"], tool=tool.name,
                                         arguments=canonical_arguments(tool, tool_call.parsed_arguments),
-                                        action="note" if self.repeats.mode == "note" else "none",
+                                        action="note" if noting else "none",
                                         identical=identical)
-                if self.repeats.mode == "note":
-                    # A new dict, so the note is the last field of the result sent to the model
-                    # and the stored copy below stays free of notes.
-                    tool_res.result = dict(clean_result)
-                    tool_res.result["note"] = (f"{self._same_call_text(last)}; the output "
-                                               f"{'is identical' if identical else 'differs'}.")
+                if noting:
+                    notes.append(f"{self._same_call_text(last)}; the output "
+                                 f"{'is identical' if identical else 'differs'}.")
                     status.print(f"\n[Repeat] {tool.name}: {self._same_call_text(last).lower()}; "
                                  f"output {'identical' if identical else 'differs'}", style="magenta bold")
-            self.repeats.remember(key, self.rounds, clean_result)
+            if notes:
+                tool_res.result = dict(clean_result)
+                tool_res.result["note"] = " ".join(notes)
+            self.repeats.remember(key, self.rounds, clean_result, full=full_result, identical=identical)
             tool_results.append(tool_res)
+        if self.max_reply_output_tokens:
+            self.cap_reply(tool_results)
         return tool_results
 
+    @staticmethod
+    def _original(tool_res: ToolResult) -> dict:
+        """The result before any cap and without notes (what the memory saves and caps cut from)."""
+        return (getattr(tool_res, "full_result", None) or getattr(tool_res, "clean_result", None)
+                or tool_res.result)
+
+    @classmethod
+    def _shortened(cls, tool_res: ToolResult, capped: dict):
+        """Install capped as the result sent to the model, keeping the original on full_result."""
+        if getattr(tool_res, "full_result", None) is None:
+            tool_res.full_result = cls._original(tool_res)
+        tool_res.result = capped
+
     def cap_output(self, tool_res: ToolResult) -> ToolResult:
-        """Shorten string fields longer than max_output_chars, keeping the head and the tail."""
-        limit = self.max_output_chars
+        """Shorten string fields over max_output_chars characters or max_output_tokens
+        estimated tokens, keeping the head and the tail (issue I12). Both limits are applied
+        to the original value, so the omission note states the true counts."""
         capped = {}
         changed = False
         for key, value in tool_res.result.items():
-            if isinstance(value, str) and len(value) > limit:
-                head = limit * 2 // 3
-                tail = limit - head
-                omitted = len(value) - limit
-                capped[key] = (value[:head]
-                               + f"\n[... {omitted} of {len(value)} characters omitted by the harness; "
-                                 "re-run the command through head, tail, sed -n or grep to see other parts ...]\n"
-                               + value[-tail:])
-                changed = True
-            else:
-                capped[key] = value
+            new = value
+            if isinstance(value, str):
+                over_chars = self.max_output_chars and len(value) > self.max_output_chars
+                over_tokens = self.max_output_tokens and estimate_tokens(value) > self.max_output_tokens
+                if over_tokens:
+                    new = shorten_tokens(value, self.max_output_tokens, "output limit", max_chars=self.max_output_chars)
+                elif over_chars:
+                    new = shorten_chars(value, self.max_output_chars, "output limit")
+                    if self.max_output_tokens and estimate_tokens(new) > self.max_output_tokens:
+                        new = shorten_tokens(value, self.max_output_tokens, "output limit", max_chars=self.max_output_chars)
+            capped[key] = new
+            changed = changed or new is not value
         if changed:
             self.outputs_capped += 1
-            tool_res.full_result = tool_res.result
-            tool_res.result = capped
-            status.debug_message(f"Output of {tool_res.name} capped at {limit} characters")
+            self._shortened(tool_res, capped)
+            status.debug_message(f"Output of {tool_res.name} capped (limits: {self.max_output_chars} characters, "
+                                 f"{self.max_output_tokens} tokens)")
         return tool_res
+
+    def cap_reply(self, tool_results: List[ToolResult]):
+        """Keep the outputs of one reply within max_reply_output_tokens together. Water-filling:
+        the largest level L with sum(min(size, L)) <= budget is found and every string field
+        above L is shortened to L, cut from its original text; fields never go below
+        MIN_KEEP_TOKENS, so a reply with very many outputs can still exceed the budget."""
+        budget = self.max_reply_output_tokens
+        fields = []   # [result index, key, estimated tokens now]
+        for i, tr in enumerate(tool_results):
+            for key, value in tr.result.items():
+                if isinstance(value, str) and key != "note":
+                    fields.append([i, key, estimate_tokens(value)])
+        if not fields or sum(f[2] for f in fields) <= budget:
+            return
+        self.replies_capped += 1
+        lo, hi = MIN_KEEP_TOKENS, max(f[2] for f in fields)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if sum(min(f[2], mid) for f in fields) <= budget:
+                lo = mid
+            else:
+                hi = mid - 1
+        level = lo
+        for i, key, tokens in fields:
+            if tokens > level:
+                tr = tool_results[i]
+                original = self._original(tr).get(key)
+                if not isinstance(original, str):
+                    original = tr.result[key]
+                capped = dict(tr.result)
+                capped[key] = shorten_tokens(original, level, "per-reply output limit")
+                self._shortened(tr, capped)
+        status.debug_message(f"Outputs of this reply shortened to about {level} tokens each "
+                             f"(reply limit {budget})")
 
     def run_conversation_step(self, message: Optional[str]=None):
         # Any message after the first one is the reply to a round without a tool call.
@@ -299,7 +396,11 @@ class CTFConversation:
                 # "exception_info": exception_info,
                 "finish_reason": self.finish_reason,
                 "repeat_detection": self.repeats.to_log(),
-                "output_cap": {"max_output_chars": self.max_output_chars, "outputs_capped": self.outputs_capped},
+                "output_cap": {"max_output_chars": self.max_output_chars,
+                               "max_output_tokens": self.max_output_tokens,
+                               "max_reply_output_tokens": self.max_reply_output_tokens,
+                               "outputs_capped": self.outputs_capped, "replies_capped": self.replies_capped},
+                "rerouted_calls": self.rerouted_calls,
                 "no_tool_call": {
                     "nudge": self.no_tool_nudge,
                     "count": len(self.no_tool_rounds),

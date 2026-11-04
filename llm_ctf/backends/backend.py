@@ -290,6 +290,14 @@ class Backend(ABC):
             return None, None
         return formatter.format_tool_calls([tool_call]), formatter
 
+    def reroute_unknown_call(self, tool_call: ToolCall, tools: dict) -> Optional[ToolCall]:
+        """A replacement for a call that names no known tool, or None (issue I11).
+
+        Backends with a text tool-call format may turn a program named as the tool
+        (``<tool_name>python3</tool_name>`` with a command parameter) into a run_command call.
+        """
+        return None
+
 class NotGiven:
     pass
 NOT_GIVEN = NotGiven()

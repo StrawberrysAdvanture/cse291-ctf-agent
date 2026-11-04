@@ -350,6 +350,19 @@ class VLLMBackend(Backend):
             status.debug_message(msg)
             return False, tool_call.error(msg)
 
+    def reroute_unknown_call(self, tool_call: ToolCall, tools: dict) -> Optional[ToolCall]:
+        # Issue I11: only with lenient parsing; see XMLFormatter.reroute_unknown_call.
+        if not self.lenient_tool_calls:
+            return None
+        reroute = getattr(self.formatter, "reroute_unknown_call", None)
+        if reroute is None:
+            return None
+        try:
+            return reroute(tool_call, tools)
+        except (ValueError, TypeError, AttributeError) as e:
+            status.debug_message(f"Could not reroute {tool_call.name} to run_command: {e}")
+            return None
+
 
     def request_messages(self):
         """The messages for the next model call."""

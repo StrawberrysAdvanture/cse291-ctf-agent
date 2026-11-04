@@ -62,11 +62,12 @@ def main():
                              "(llm: the model writes the summary; truncate: head and tail of each output; "
                              "mask: outputs replaced by a placeholder). Overrides the config's memory "
                              "section; other memory options come from the config. vllm backend only.")
-    parser.add_argument("--repeat-detection", choices=["off", "note", "skip"], default=None,
+    parser.add_argument("--repeat-detection", choices=["off", "note", "skip", "skip_identical"], default=None,
                         help="when a tool call repeats an earlier call with the same arguments: "
                              "note: run it and add a note to the result; skip: return the earlier "
-                             "result without running it. Overrides the config's "
-                             "parameter.repeat_detection (default off).")
+                             "result without running it; skip_identical: run it again once, then "
+                             "stop running it once it has reproduced the same output. Overrides "
+                             "the config's parameter.repeat_detection (default off).")
     parser.add_argument("--lenient-tool-calls", choices=["on", "off"], default=None,
                         help="accept an <invoke> block without the <function_calls> wrapper and "
                              "schema-style parameters as a tool call (issue I11). Overrides "
@@ -77,6 +78,13 @@ def main():
     parser.add_argument("--max-output-chars", type=int, default=None,
                         help="cap each tool output at this many characters, keeping the head and "
                              "the tail (issue I12). Overrides parameter.max_output_chars (default 0, no cap).")
+    parser.add_argument("--max-output-tokens", type=int, default=None,
+                        help="cap each tool output at this many estimated tokens (llm_ctf/tokens.py; "
+                             "dense text such as hex counts more per character). Overrides "
+                             "parameter.max_output_tokens (default 0, no cap).")
+    parser.add_argument("--max-reply-output-tokens", type=int, default=None,
+                        help="cap all tool outputs of one reply together at this many estimated tokens. "
+                             "Overrides parameter.max_reply_output_tokens (default 0, no cap).")
     parser.add_argument("--no-tool-nudge", choices=["on", "off"], default=None,
                         help="after a reply with no tool call, send a message that restates the "
                              "tool-call format with an example instead of 'Please proceed...'. "
@@ -124,17 +132,27 @@ def main():
     # Harness options (llm_ctf/conversation.py): the config's `parameter` section, overridden by the flags.
     if args.repeat_detection is None:
         args.repeat_detection = str(config_parameter.get("repeat_detection", "off")).lower()
-    if args.repeat_detection not in ("off", "note", "skip"):
-        parser.error(f"parameter.repeat_detection must be off, note or skip, not {args.repeat_detection!r}")
+    if args.repeat_detection not in ("off", "note", "skip", "skip_identical"):
+        parser.error(f"parameter.repeat_detection must be off, note, skip or skip_identical, not {args.repeat_detection!r}")
+    def config_flag(name):
+        value = config_parameter.get(name, False)
+        if isinstance(value, str):   # "false" in YAML is a string, and bool("false") is True
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
+
     for name in ("lenient_tool_calls", "stop_after_first_call"):
         value = getattr(args, name)
-        setattr(args, name, bool(config_parameter.get(name, False)) if value is None else value == "on")
-    if args.max_output_chars is None:
-        args.max_output_chars = int(config_parameter.get("max_output_chars", 0) or 0)
-    if args.max_output_chars < 0:
-        parser.error("max_output_chars must be 0 (no cap) or a positive number")
+        setattr(args, name, config_flag(name) if value is None else value == "on")
+    for name in ("max_output_chars", "max_output_tokens", "max_reply_output_tokens"):
+        if getattr(args, name) is None:
+            try:
+                setattr(args, name, int(config_parameter.get(name, 0) or 0))
+            except (TypeError, ValueError):
+                parser.error(f"parameter.{name} must be a whole number, not {config_parameter.get(name)!r}")
+        if getattr(args, name) < 0:
+            parser.error(f"{name} must be 0 (no cap) or a positive number")
     if args.no_tool_nudge is None:
-        args.no_tool_nudge = bool(config_parameter.get("no_tool_nudge", False))
+        args.no_tool_nudge = config_flag("no_tool_nudge")
     else:
         args.no_tool_nudge = args.no_tool_nudge == "on"
 
@@ -205,7 +223,8 @@ def main():
 
     with CTFConversation(environment, challenge, prompt_manager, backend, logfile, max_rounds=args.max_rounds, max_cost=args.max_cost, args=args,
                          repeat_detection=args.repeat_detection, no_tool_nudge=args.no_tool_nudge,
-                         max_output_chars=args.max_output_chars) as convo:
+                         max_output_chars=args.max_output_chars, max_output_tokens=args.max_output_tokens,
+                         max_reply_output_tokens=args.max_reply_output_tokens) as convo:
         convo.run()
 
 if __name__ == "__main__":

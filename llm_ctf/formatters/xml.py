@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 from .formatter import Formatter
 from ..tools import Tool, ToolCall, ToolResult
 from ..prompts import PromptManager
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 TOOL_USE_START = '<function_calls>'
 TOOL_USE_STOP = '</function_calls>'
@@ -144,6 +144,73 @@ class XMLFormatter(Formatter):
         self.validate_args(tool, parsed_tc)
         self.convert_args(tool, parsed_tc)
         return parsed_tc
+
+    # Parameters that may hold a program's arguments when the model names the program as the
+    # tool, in the order they are joined; shells get the command as written.
+    REROUTE_PARAMS = ("path", "file", "filename", "command", "cmd", "args", "arguments")
+    SHELLS = ("bash", "sh", "dash", "zsh", "shell")
+    NOT_PARAMS = ("tool_name", "call_id", "parameters", "parameter", "name", "type", "value", "description")
+
+    @staticmethod
+    def known_tool_names() -> set:
+        """Every tool defined in the code base, whatever the challenge's category offers."""
+        return {getattr(cls, "NAME", "") for cls in Tool.__subclasses__()} - {""}
+
+    def invoke_parameters(self, invocation) -> dict:
+        """name -> text for an invoke's parameters: direct ``<x>v</x>`` elements and
+        schema-style ``<parameter><name>x</name><value>v</value></parameter>`` pairs."""
+        params = {}
+        container = invocation.find("parameters") or invocation
+        for child in container.find_all(recursive=False):
+            if child.name not in self.NOT_PARAMS and child.text.strip():
+                params.setdefault(child.name, child.text.strip())
+        for name_elem in invocation.find_all("name"):
+            key = name_elem.text.strip()
+            holder = name_elem.parent if name_elem.parent is not None and name_elem.parent.name == "parameter" else None
+            value_elem = holder.find("value") if holder is not None else name_elem.find_next("value")
+            if key and value_elem is not None and value_elem.text.strip():
+                params.setdefault(key, value_elem.text.strip())
+        return params
+
+    def reroute_unknown_call(self, tc: ToolCall, tools: dict) -> Optional[ToolCall]:
+        """Lenient mode (issue I11): the model sometimes names a program as the tool
+        (``<tool_name>python3</tool_name><parameters><command>x.py</command>``). When the name
+        looks like a program and a parameter holds its arguments, return a parsed
+        ``run_command`` call for ``<name> <arguments>``; otherwise None. A name that is a
+        prefix or an extension of a real tool (``run``, ``dis``, ``run_commands``) is a
+        damaged tool call, not a program, and stays unknown."""
+        if not self.lenient or "run_command" not in tools:
+            return None
+        name = (tc.name or "").strip()
+        lname = name.lower()
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.+-]*", name):
+            return None
+        known = {t.lower() for t in self.known_tool_names()} | {t.lower() for t in tools}
+        if any(t.startswith(lname) or lname.startswith(t) for t in known):
+            return None
+        invocation = tc.function.arguments
+        if invocation is None or isinstance(invocation, str) or not hasattr(invocation, "find"):
+            return None
+        params = self.invoke_parameters(invocation)
+        values = [params[p] for p in self.REROUTE_PARAMS if p in params]
+        if not values:
+            return None
+        joined = " ".join(values)
+        if lname in self.SHELLS or re.search(r"(^|\s|/)" + re.escape(name) + r"(\s|$)", joined):
+            command = joined          # the program is already part of the command line
+        else:
+            command = f"{name} {joined}"
+        parsed = {"command": command}
+        timeout = params.get("timeout")
+        if timeout:
+            try:
+                parsed["timeout"] = float(timeout)
+            except ValueError:
+                pass                  # an unparseable timeout is dropped, not fatal
+        new_call = ToolCall.create_parsed("run_command", tc.id, parsed)
+        self.validate_args(tools["run_command"], new_call)
+        self.convert_args(tools["run_command"], new_call)
+        return new_call
 
     def get_delimiters(self) -> Tuple[List[str],List[str]]:
         """Return the start and stop delimiters for this formatter."""
