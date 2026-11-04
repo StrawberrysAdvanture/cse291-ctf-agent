@@ -25,9 +25,11 @@ echo "GPU memory: ${gpu_mib} MiB, max model length: $MAX_MODEL_LEN"
 mkdir -p "$HOME/.cache/huggingface"
 docker_env=()
 [ -n "${HF_TOKEN:-}" ] && docker_env+=(-e "HF_TOKEN=$HF_TOKEN")
-# Published on 127.0.0.1 only; the agent runs on this host.
+# Published on 127.0.0.1 only; the agent runs on this host. Host port 18000, not 8000:
+# several challenges' own services publish port 8000 and would fail to start (issue I10).
+VLLM_PORT=18000
 docker run -d --name vllm --gpus all --ipc=host \
-    -p 127.0.0.1:8000:8000 \
+    -p "127.0.0.1:${VLLM_PORT}:8000" \
     -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
     "${docker_env[@]+"${docker_env[@]}"}" \
     "$VLLM_IMAGE" \
@@ -49,7 +51,7 @@ pip install -q -r requirements.txt pyyaml
 set_status "SETUP building ctfenv Docker image (slow on first run)"
 ./setup.sh
 
-printf 'MODEL_URL: http://127.0.0.1:8000/v1\n' > keys.cfg
+printf 'MODEL_URL: http://127.0.0.1:%s/v1\n' "$VLLM_PORT" > keys.cfg
 
 # Download the dataset now (while the model loads) so that listing challenges later
 # does not trigger a download whose git output would be mistaken for challenge names.
@@ -72,7 +74,7 @@ PY
 # ------------------------------------------------------------------ 3. wait for the model
 set_status "WAITING_FOR_MODEL (downloading/loading weights)"
 for i in $(seq 1 240); do   # up to 60 minutes
-    if curl -sf http://127.0.0.1:8000/v1/models >/dev/null; then break; fi
+    if curl -sf "http://127.0.0.1:${VLLM_PORT}/v1/models" >/dev/null; then break; fi
     if [ -z "$(docker ps -q -f name=^vllm$)" ]; then
         echo "vLLM exited during startup. Last log lines:"
         docker logs --tail 60 vllm
@@ -81,7 +83,7 @@ for i in $(seq 1 240); do   # up to 60 minutes
     [ "$i" = 240 ] && { echo "vLLM did not become ready within 60 minutes"; docker logs --tail 60 vllm; exit 1; }
     sleep 15
 done
-curl -s http://127.0.0.1:8000/v1/models; echo
+curl -s "http://127.0.0.1:${VLLM_PORT}/v1/models"; echo
 
 # ------------------------------------------------------------------ 4. run
 if [ -n "$JOB_CMD" ]; then

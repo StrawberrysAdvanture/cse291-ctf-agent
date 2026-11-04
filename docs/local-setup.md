@@ -219,6 +219,7 @@ For the first trace, check whether the agent (1) receives the challenge, (2) emi
 | PyTorch `__nvJitLinkComplete_12_4` error | Unset `LD_LIBRARY_PATH` in the vLLM environment. |
 | Model missing from `--help` | Check the Qwen entry in `VLLMBackend.MODELS` and your Git branch. |
 | Connection refused on port 8000 | Start vLLM; check `curl http://127.0.0.1:8000/v1/models`. |
+| A challenge crashes in `start_challenge_container` (`docker compose ... up` fails) | Several challenges' services publish host port 8000 (`2016q-cry-sleeping_guard`, `2016q-cry-broken_box`, `2013q-cry-slurp`), the port vLLM uses above. Serve vLLM on another port (for example `--port 18000`, and the same port in `keys.cfg`). |
 | `dataset.keys()` returns zero | Use `dataset.all()`; records are stored in `self.dataset`. |
 | Docker image/network missing | Build `ctfenv` and create `ctfnet` as above. |
 

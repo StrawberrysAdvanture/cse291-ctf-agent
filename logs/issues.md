@@ -14,7 +14,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 | I7 | open | harness | The loop makes `max_rounds + 1` model calls |
 | I8 | open | memory | Memory v1 never shows the latest output verbatim |
 | I9 | mitigation implemented, untested | agent | Replies with no tool call: the model describes steps instead of running them |
-| I10 | open | runner | Some challenges' own services fail to start (`docker compose up` non-zero); the cause was not logged |
+| I10 | fixed | runner | Challenges whose service publishes port 8000 could not start: vLLM was bound to that port |
 
 ## I1. Repeated actions
 
@@ -76,5 +76,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 ## I10. Challenge services fail to start
 
 - **Observed:** run `6b9b` (baseline, 32k), 00:09 UTC: `2013q-cry-slurp` crashed in `CTFConversation.__enter__` because `docker compose -f .../crypto/slurp/docker-compose.yml up -d --force-recreate` returned non-zero. nyuctf runs compose with its output captured and `check=True`, so the log shows the command but not the error. The run continued with the next challenge; the crashed challenge has no conversation log and counts as `no_log` in the analysis.
-- **Fix so far:** `CTFConversation.__enter__` now prints compose's stdout and stderr before re-raising, so the next run shows the cause.
-- **Next step:** read the cause in the next run's `job.log`; if it is an image build failure inside the challenge's compose file, decide whether to pre-build or skip those challenges and mark them in the results.
+- **Also failed the same way in `6b9b`:** `2016q-cry-sleeping_guard` and `2016q-cry-broken_box` (00:44 UTC). Three challenges in all, none with a conversation log.
+- **Cause:** the three compose files (read from the dataset repository) publish host port `8000:8000`, and the runner serves vLLM on host port 8000, so `docker compose up` fails with a port conflict. The local setup guide uses port 8000 for vLLM too, so its suggested smoke test (`2016q-cry-sleeping_guard`) would hit the same conflict.
+- **Fix:** `aws/remote/job.sh` now publishes vLLM on host port 18000 (`VLLM_PORT`), and `keys.cfg` points there; `docs/local-setup.md` has a troubleshooting row. `CTFConversation.__enter__` also prints compose's output on such failures (`fbca814`).
+- **Consequence for the results:** these three challenges have no log in run `6b9b` and count as crashes; a memory run on the old port would lose the same three, so paired comparisons are unaffected but the baseline solve rate is over 54 challenges, not 57. Rerun them separately or include them in the next run.

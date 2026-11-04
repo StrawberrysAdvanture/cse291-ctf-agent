@@ -136,7 +136,7 @@ The script splits the size across categories in proportion to their counts and p
    - uploads the working tree (git-tracked and untracked files; `.gitignore`'d files such as `keys.cfg` are left out);
    - launches the AWS Deep Learning Base GPU AMI (Ubuntu 22.04).
 2. **On the instance** (`aws/remote/`):
-   - starts vLLM (`vllm/vllm-openai:v0.10.1.1` Docker image, listening on `127.0.0.1:8000` only);
+   - starts vLLM (`vllm/vllm-openai:v0.10.1.1` Docker image, listening on `127.0.0.1:18000` only; not 8000, which several challenges' services publish);
    - while the model loads, creates the agent venv, runs `setup.sh` and writes `keys.cfg`;
    - runs `llm_ctf_solve.py` for each challenge.
 3. **Results:** outputs are uploaded to `s3://<bucket>/runs/<RUN_ID>/outputs/` every 30 seconds. When the job ends, the instance terminates itself.
