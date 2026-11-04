@@ -1,0 +1,74 @@
+# Part 1: run 20261104-050449-2c0c (challenges 1-20; hung on 21, terminated)
+[05:06:01] >>> SETUP system packages
+[05:06:34] >>> STARTING_VLLM Qwen/Qwen2.5-7B-Instruct-AWQ
+[05:15:41] >>> SETUP agent environment
+[05:15:59] >>> SETUP building ctfenv Docker image (slow on first run)
+[05:30:43] >>> SETUP downloading the NYU CTF dataset
+[05:31:24] >>> WAITING_FOR_MODEL (downloading/loading weights)
+[05:31:25] >>> RUNNING challenge 1/57: 2013f-cry-stfu
+[05:34:09] >>> RUNNING challenge 2/57: 2013f-web-historypeats
+[05:35:02] >>> RUNNING challenge 3/57: 2013q-cry-csawpad
+[05:35:33] >>> RUNNING challenge 4/57: 2013q-cry-slurp
+[05:39:42] >>> RUNNING challenge 5/57: 2013q-cry-onlythisprogram
+[05:40:06] >>> RUNNING challenge 6/57: 2013q-msc-life
+[05:41:23] >>> RUNNING challenge 7/57: 2013q-msc-networking_2
+[05:42:10] >>> RUNNING challenge 8/57: 2013q-msc-networking_1
+[05:42:50] >>> RUNNING challenge 9/57: 2013q-web-guess_harder
+[05:43:34] >>> RUNNING challenge 10/57: 2013q-pwn-csaw_diary
+[05:44:44] >>> RUNNING challenge 11/57: 2014f-rev-return_of_the_weiner
+[05:46:10] >>> RUNNING challenge 12/57: 2014f-rev-odd
+[05:46:47] >>> RUNNING challenge 13/57: 2014f-msc-pps
+[05:47:44] >>> RUNNING challenge 14/57: 2014f-web-webroot
+[05:48:21] >>> RUNNING challenge 15/57: 2014f-pwn-kernel
+[05:50:18] >>> RUNNING challenge 16/57: 2014q-rev-aerosol_can
+[05:51:23] >>> RUNNING challenge 17/57: 2014q-rev-weissman
+[05:53:14] >>> RUNNING challenge 18/57: 2014q-web-silkgoat
+[05:53:59] >>> RUNNING challenge 19/57: 2014q-pwn-ish
+[05:55:31] >>> RUNNING challenge 20/57: 2014q-pwn-the_road_less_traveled
+[05:56:37] >>> RUNNING challenge 21/57: 2016f-rev-palo_alto
+
+# Part 2: run 20261104-065735-636e (challenges 21-57)
+[07:04:13] >>> SETUP system packages
+[07:04:47] >>> STARTING_VLLM Qwen/Qwen2.5-7B-Instruct-AWQ
+[07:13:52] >>> SETUP agent environment
+[07:14:11] >>> SETUP building ctfenv Docker image (slow on first run)
+[07:30:31] >>> SETUP downloading the NYU CTF dataset
+[07:31:13] >>> WAITING_FOR_MODEL (downloading/loading weights)
+[07:31:14] >>> RUNNING challenge 1/37: 2016f-rev-palo_alto
+[07:32:04] >>> RUNNING challenge 2/37: 2016f-cry-katy
+[07:34:46] >>> RUNNING challenge 3/37: 2016f-cry-killer_cipher
+[07:35:27] >>> RUNNING challenge 4/37: 2016f-for-pure_poetry
+[07:36:04] >>> RUNNING challenge 5/37: 2016f-web-cloudb
+[07:36:56] >>> RUNNING challenge 6/37: 2016f-web-seizure_cipher
+[07:38:54] >>> RUNNING challenge 7/37: 2016f-pwn-detective
+[07:57:33] >>> RUNNING challenge 8/37: 2016q-rev-rock
+[07:59:33] >>> RUNNING challenge 9/37: 2016q-rev-deedeedee
+[08:02:23] >>> RUNNING challenge 10/37: 2016q-cry-sleeping_guard
+[08:03:48] >>> RUNNING challenge 11/37: 2016q-cry-broken_box
+[08:07:21] >>> RUNNING challenge 12/37: 2016q-for-watchword
+[08:09:05] >>> RUNNING challenge 13/37: 2016q-for-kill
+[08:09:39] >>> RUNNING challenge 14/37: 2016q-for-yaar_haar_fiddle_dee_dee
+[08:10:41] >>> RUNNING challenge 15/37: 2016q-for-clams_dont_dance
+[08:12:45] >>> RUNNING challenge 16/37: 2016q-for-evidence_zip
+[08:13:11] >>> RUNNING challenge 17/37: 2016q-msc-coinslot
+[08:13:50] >>> RUNNING challenge 18/37: 2016q-msc-regexpire
+[08:14:35] >>> RUNNING challenge 19/37: 2016q-web-i_got_id
+[08:16:33] >>> RUNNING challenge 20/37: 2016q-web-mfw
+[08:18:46] >>> RUNNING challenge 21/37: 2016q-pwn-warmup
+[08:20:50] >>> RUNNING challenge 22/37: 2016q-pwn-tutorial
+[08:24:25] >>> RUNNING challenge 23/37: 2016q-pwn-hungman
+[08:25:33] >>> RUNNING challenge 24/37: 2015f-rev-wyvern2
+[08:28:38] >>> RUNNING challenge 25/37: 2015f-for-mandiant
+[08:29:46] >>> RUNNING challenge 26/37: 2015f-pwn-hipster
+[08:35:15] >>> RUNNING challenge 27/37: 2015q-rev-ftp
+[08:37:30] >>> RUNNING challenge 28/37: 2015q-rev-wyvern
+[08:39:31] >>> RUNNING challenge 29/37: 2015q-cry-eps
+[08:41:27] >>> RUNNING challenge 30/37: 2015q-cry-eps_part2
+[08:43:31] >>> RUNNING challenge 31/37: 2015q-cry-bricks_of_gold
+[08:44:08] >>> RUNNING challenge 32/37: 2015q-for-sharpturn
+[08:45:01] >>> RUNNING challenge 33/37: 2015q-for-flash
+[08:47:47] >>> RUNNING challenge 34/37: 2015q-for-pcapin
+[08:48:37] >>> RUNNING challenge 35/37: 2015q-web-k_stairs
+[08:49:48] >>> RUNNING challenge 36/37: 2015q-web-throwback
+[08:50:48] >>> RUNNING challenge 37/37: 2015q-pwn-meme_shop
+[08:53:45] >>> DONE exit=0
