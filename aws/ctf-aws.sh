@@ -19,6 +19,8 @@ export AWS_DEFAULT_REGION="$REGION" AWS_PAGER=""
 
 PROJECT_TAG="llm-ctf"
 ROLE_NAME="llm-ctf-runner"
+LAUNCHED_ID=""   # set by launch_type_in_zones on success
+LAST_ERROR=""    # last capacity error seen by launch_type_in_zones
 AMI_NAME_PATTERN="Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*"
 VLLM_IMAGE_DEFAULT="vllm/vllm-openai:v0.10.1.1"
 
@@ -39,8 +41,9 @@ Commands:
 
 launch options:
   --gpu-mem GB         Required. Minimum GPU memory. The cheapest single-GPU
-                       instance with at least this much is chosen
-                       (24 -> g5/g6, 48 -> g6e L40S, 96 -> g7e RTX PRO 6000).
+                       instance with at least this much is chosen; the other
+                       usable types are fallbacks (24 -> g6 L4, 48 -> g6e L40S,
+                       96 -> g7e RTX PRO 6000).
   --model HF_ID        Hugging Face checkpoint to serve
                        (default: Qwen/Qwen2.5-7B-Instruct-AWQ, the baseline model).
   --served-name NAME   Model name the agent uses; must be in VLLMBackend.MODELS
@@ -49,12 +52,18 @@ launch options:
                        is replaced with --served-name.
   --challenges LIST    Comma-separated challenge names, or "all"
                        (default: 2016q-cry-sleeping_guard).
+  --challenges-file FILE
+                       File with one challenge name per line (blank lines and
+                       # comments are ignored). Must be inside the repository, which
+                       is uploaded to the instance. Not with --challenges.
   --split SPLIT        development | test (default: development).
   --max-model-len N    vLLM context length (default: 32768, the model's full
                        context, on GPUs with >= 20 GB; 4096 on smaller GPUs).
   --max-hours H        Hard limit; the instance terminates after H hours (default: 12).
   --disk GB            Root volume size (default: 200).
-  --instance-type T    Skip automatic selection and use this type.
+  --instance-type T    Use only this type (no fallback).
+  --wait-capacity MIN  If no type has capacity, retry every 5 minutes for up to
+                       MIN minutes (default: 0, give up after one pass).
   --keep               Do not terminate when the job ends (still bounded by --max-hours).
   --yes, -y            Do not ask for confirmation.
   --dry-run            Show what would be launched, then exit.
@@ -96,6 +105,18 @@ vcpu_quota() {
     aws service-quotas get-service-quota --service-code ec2 --quota-code "$code" \
         --query 'Quota.Value' --output text 2>/dev/null | cut -d. -f1 || true
 }
+
+# Name of the vCPU quota that applies to an instance type, for messages.
+vcpu_quota_name() {
+    case "$1" in
+        g*) echo "Running On-Demand G and VT instances (L-DB2E81BA)" ;;
+        p*) echo "Running On-Demand P instances (L-417A185B)" ;;
+        *) echo "vCPU" ;;
+    esac
+}
+
+# HH:MM in UTC for a Unix timestamp (GNU and BSD date).
+utc_clock() { date -u -d "@$1" +%H:%M 2>/dev/null || date -u -r "$1" +%H:%M; }
 
 availability_zones_for() {
     aws ec2 describe-instance-type-offerings --location-type availability-zone \
@@ -158,24 +179,76 @@ latest_ami() {
         --query 'sort_by(Images,&CreationDate)[-1].[ImageId,RootDeviceName]' --output text
 }
 
+# Prints FILE's path relative to the repo root. FILE may be repo-relative (like
+# --config), relative to the current directory, or absolute. Fails if it is not
+# an existing file inside the repository.
+repo_relative() {
+    local f=$1 abs
+    [ -f "$REPO_ROOT/$f" ] && f="$REPO_ROOT/$f"
+    [ -f "$f" ] || return 1
+    abs="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
+    case "$abs" in "$REPO_ROOT"/*) printf '%s\n' "${abs#"$REPO_ROOT"/}" ;; *) return 1 ;; esac
+}
+
 # ---------------------------------------------------------------- launch
+
+# Tries TYPE in every zone of AZS (comma-separated). Success: sets LAUNCHED_ID, returns 0.
+# Returns 1 when every zone lacks capacity or the vCPU quota is in use (LAST_ERROR set).
+# Dies on any other error. Uses cmd_launch's ami, root_dev, sg, disk, tmp and run_id.
+launch_type_in_zones() {
+    local type=$1 vcpus=$2 azs=$3 az subnet out="" attempt
+    for az in ${azs//,/ }; do
+        subnet=$(aws ec2 describe-subnets --filters Name=default-for-az,Values=true "Name=availability-zone,Values=$az" \
+            --query 'Subnets[0].SubnetId' --output text)
+        [ -n "$subnet" ] && [ "$subnet" != "None" ] || continue
+        for attempt in 1 2 3 4 5 6; do
+            if out=$(aws ec2 run-instances \
+                    --image-id "$ami" --instance-type "$type" --subnet-id "$subnet" --security-group-ids "$sg" \
+                    --iam-instance-profile "Name=$ROLE_NAME" \
+                    --instance-initiated-shutdown-behavior terminate \
+                    --metadata-options HttpTokens=required,HttpEndpoint=enabled \
+                    --block-device-mappings "DeviceName=$root_dev,Ebs={VolumeSize=$disk,VolumeType=gp3,DeleteOnTermination=true}" \
+                    --user-data "file://$tmp/user-data.sh" \
+                    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=llm-ctf-$run_id},{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$run_id}]" \
+                    --query 'Instances[0].InstanceId' --output text 2>&1); then
+                LAUNCHED_ID=$out; return 0
+            fi
+            case "$out" in
+                *"Invalid IAM Instance Profile"*|*iamInstanceProfile*)   # new IAM profile still propagating
+                    [ "$attempt" -lt 6 ] || die "IAM instance profile $ROLE_NAME still not usable after 60 s: $out"
+                    sleep 10 ;;
+                *InsufficientInstanceCapacity*|*Unsupported*)
+                    log "No capacity for $type in $az"; continue 2 ;;
+                *VcpuLimitExceeded*)   # account-wide, so no point trying other zones
+                    log "$type needs $vcpus vCPUs, but the '$(vcpu_quota_name "$type")' quota is used by other running instances (aws/ctf-aws.sh status lists ours); treating as no capacity"
+                    LAST_ERROR=$out; return 1 ;;
+                *) die "$out" ;;
+            esac
+        done
+    done
+    LAST_ERROR=${out:-"no default subnet in any zone that offers $type"}
+    return 1
+}
 
 cmd_launch() {
     local gpu_mem="" model="Qwen/Qwen2.5-7B-Instruct-AWQ" served="" config="config/qwen_baseline.yaml"
     local challenges="2016q-cry-sleeping_guard" split="development" max_len="" max_hours=12
-    local disk=200 itype="" keep=0 yes=0 dry=0 job_cmd=""
+    local disk=200 itype="" keep=0 yes=0 dry=0 job_cmd="" wait_capacity=0
+    local challenges_file="" challenges_given=0 n_chal=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --gpu-mem) gpu_mem=$2; shift 2 ;;
             --model) model=$2; shift 2 ;;
             --served-name) served=$2; shift 2 ;;
             --config) config=$2; shift 2 ;;
-            --challenges) challenges=$2; shift 2 ;;
+            --challenges) challenges=$2; challenges_given=1; shift 2 ;;
+            --challenges-file) challenges_file=$2; shift 2 ;;
             --split) split=$2; shift 2 ;;
             --max-model-len) max_len=$2; shift 2 ;;
             --max-hours) max_hours=$2; shift 2 ;;
             --disk) disk=$2; shift 2 ;;
             --instance-type) itype=$2; shift 2 ;;
+            --wait-capacity) wait_capacity=$2; shift 2 ;;
             --keep) keep=1; shift ;;
             -y|--yes) yes=1; shift ;;
             --dry-run) dry=1; shift ;;
@@ -188,14 +261,31 @@ cmd_launch() {
     [ -n "$gpu_mem" ] || [ -n "$itype" ] || die "--gpu-mem is required (e.g. --gpu-mem 24)"
     case "$gpu_mem" in ''|*[!0-9]*) [ -n "$itype" ] || die "--gpu-mem must be a whole number of GB" ;; esac
     case "$max_hours" in ''|*[!0-9]*|0) die "--max-hours must be a positive whole number" ;; esac
+    case "$wait_capacity" in ''|*[!0-9]*) die "--wait-capacity must be a whole number of minutes" ;; esac
     [ -n "$served" ] || served="${model%-AWQ}"
     [ -f "$REPO_ROOT/$config" ] || die "config file not found: $config"
+    if [ -n "$challenges_file" ]; then
+        local rel bad
+        [ "$challenges_given" = 0 ] || die "--challenges and --challenges-file are mutually exclusive"
+        rel=$(repo_relative "$challenges_file") \
+            || die "challenge file not found or outside the repository: $challenges_file (it must be inside the repo, which is uploaded to the instance)"
+        challenges_file=$rel
+        # The upload takes what `git ls-files -co --exclude-standard` lists, so an ignored file would be missing.
+        ( cd "$REPO_ROOT" && git ls-files -z -co --exclude-standard -- "$challenges_file" | tr '\0' '\n' | grep -qxF "$challenges_file" ) \
+            || die "$challenges_file is excluded by .gitignore, so it would not be uploaded to the instance"
+        # Same reading rules as aws/remote/job.sh: # comments and blank lines are skipped, CR is dropped.
+        bad=$(grep -n -v '^[[:space:]]*#' "$REPO_ROOT/$challenges_file" | tr -d '\r' | grep -v '^[0-9]*:$' | grep '[[:space:]]' | head -1 || true)
+        [ -z "$bad" ] || die "$challenges_file line ${bad%%:*}: challenge names must not contain whitespace: '${bad#*:}'"
+        n_chal=$(grep -v '^[[:space:]]*#' "$REPO_ROOT/$challenges_file" | tr -d '\r' | grep -c . || true)
+        [ "$n_chal" -gt 0 ] || die "no challenge names in $challenges_file"
+    fi
     grep -qF "\"$served\"" "$REPO_ROOT/llm_ctf/backends/vllm_backend.py" \
         || die "'$served' is not in VLLMBackend.MODELS (llm_ctf/backends/vllm_backend.py). Add it there, or pass --served-name."
 
     need_aws
 
-    # Pick the instance type and AZ.
+    # Pick the instance types: every candidate that is offered here and fits the vCPU quota,
+    # cheapest first. The first one is launched; the others are fallbacks.
     local candidates
     if [ -n "$itype" ]; then
         candidates=$(aws ec2 describe-instance-types --instance-types "$itype" \
@@ -207,43 +297,60 @@ cmd_launch() {
         [ -n "$candidates" ] || die "no single-GPU instance type in $REGION has ${gpu_mem} GB of GPU memory"
     fi
 
-    local chosen="" chosen_azs="" mib vcpus t gname quota azs skipped=""
+    # usable_types: "type1 type2 ..."; usable_info: one "type mib vcpus az1,az2,... gpu name" line
+    # per type (the GPU name can contain spaces, so it stays last).
+    local usable_types="" usable_info="" skipped="" mib vcpus t gname quota azs
     while read -r mib vcpus t gname; do
         [ -n "$t" ] || continue
-        azs=$(availability_zones_for "$t")
+        azs=$(availability_zones_for "$t" </dev/null | tr '\t\n' ',,' | sed 's/,*$//')
         if [ -z "$azs" ]; then skipped="$skipped $t(not offered in $REGION)"; continue; fi
-        quota=$(vcpu_quota "$t")
+        quota=$(vcpu_quota "$t" </dev/null)
         if [ -n "$quota" ] && [ "$quota" != "None" ] && [ "$vcpus" -gt "$quota" ]; then
             skipped="$skipped $t(needs $vcpus vCPUs, quota is $quota)"; continue
         fi
-        chosen="$mib $vcpus $t $gname"; chosen_azs=$azs; break
+        usable_types="${usable_types:+$usable_types }$t"
+        usable_info="$usable_info$t $mib $vcpus $azs $gname
+"
     done <<EOF
 $candidates
 EOF
-    [ -n "$chosen" ] || die "no usable instance type. Skipped:$skipped. Request a quota increase in the Service Quotas console, or try another AWS_REGION."
-    local inst_type gpu_desc
-    read -r mib vcpus inst_type gname <<< "$chosen"
+    [ -n "$usable_types" ] || die "no usable instance type. Skipped:$skipped. Request a quota increase in the Service Quotas console, or try another AWS_REGION."
+    local primary_type gpu_desc fallbacks=""
+    primary_type=${usable_types%% *}
+    read -r t mib vcpus azs gname <<< "$usable_info"   # first line
     gpu_desc="1x $gname ($(( mib / 1024 )) GiB)"
+    case "$usable_types" in *" "*) fallbacks=$(echo "${usable_types#* }" | sed 's/ /, /g') ;; esac
 
     local ami_info ami root_dev
     ami_info=$(latest_ami); ami=$(echo "$ami_info" | cut -f1); root_dev=$(echo "$ami_info" | cut -f2)
     [ -n "$ami" ] && [ "$ami" != "None" ] || die "could not find the AWS Deep Learning AMI in $REGION"
 
-    local run_id
+    local run_id job_desc
     run_id="$(date -u +%Y%m%d-%H%M%S)-$(printf '%04x' $RANDOM)"
+    if [ -n "$job_cmd" ]; then job_desc=$job_cmd
+    elif [ -n "$challenges_file" ]; then job_desc="challenges: $n_chal from $challenges_file ($split split)"
+    else job_desc="challenges: $challenges ($split split)"
+    fi
 
-    cat >&2 <<EOF
-
-  Run ID        $run_id
-  Region        $REGION
-  Instance      $inst_type, $gpu_desc, on-demand
-  Model         $model  (served as $served)
-  Job           ${job_cmd:-challenges: $challenges ($split split)}
-  Config        $config
-  Time limit    ${max_hours}h, then the instance terminates
-  Outputs       s3://$BUCKET/runs/$run_id/
-$( [ -n "$skipped" ] && echo "  Skipped      $skipped" )
-EOF
+    {
+        echo
+        echo "  Run ID        $run_id"
+        echo "  Region        $REGION"
+        echo "  Instance      $primary_type, $gpu_desc, on-demand"
+        if [ -n "$fallbacks" ]; then
+            echo "  Fallbacks     $fallbacks  (tried in this order if $primary_type has no capacity; a later type can cost more)"
+        fi
+        if [ "$wait_capacity" -gt 0 ]; then
+            echo "  Wait          up to ${wait_capacity} min for capacity, retrying every 5 min"
+        fi
+        echo "  Model         $model  (served as $served)"
+        echo "  Job           $job_desc"
+        echo "  Config        $config"
+        echo "  Time limit    ${max_hours}h, then the instance terminates"
+        echo "  Outputs       s3://$BUCKET/runs/$run_id/"
+        if [ -n "$skipped" ]; then echo "  Skipped      $skipped"; fi
+        echo
+    } >&2
     if [ "$dry" = 1 ]; then log "Dry run: nothing launched."; return; fi
     if [ "$yes" = 0 ] && [ -t 0 ]; then
         printf 'Launch? This starts a billed GPU instance. [y/N] ' >&2
@@ -276,6 +383,7 @@ EOF
         printf 'SERVED_NAME=%q\n' "$served"
         printf 'AGENT_CONFIG=%q\n' "$config"
         printf 'CHALLENGES=%q\n' "$challenges"
+        printf 'CHALLENGES_FILE=%q\n' "$challenges_file"
         printf 'SPLIT=%q\n' "$split"
         printf 'MAX_MODEL_LEN=%q\n' "$max_len"
         printf 'VLLM_IMAGE=%q\n' "${VLLM_IMAGE:-$VLLM_IMAGE_DEFAULT}"
@@ -294,33 +402,25 @@ EOF
         cat "$REPO_ROOT/aws/remote/user-data.sh"
     } > "$tmp/user-data.sh"
 
-    # Launch, trying each AZ that offers the type.
-    log "Launching $inst_type"
-    local az subnet out="" instance_id=""
-    for az in $chosen_azs; do
-        subnet=$(aws ec2 describe-subnets --filters Name=default-for-az,Values=true "Name=availability-zone,Values=$az" \
-            --query 'Subnets[0].SubnetId' --output text)
-        [ -n "$subnet" ] && [ "$subnet" != "None" ] || continue
-        for _ in 1 2 3 4 5 6; do
-            if out=$(aws ec2 run-instances \
-                    --image-id "$ami" --instance-type "$inst_type" --subnet-id "$subnet" --security-group-ids "$sg" \
-                    --iam-instance-profile "Name=$ROLE_NAME" \
-                    --instance-initiated-shutdown-behavior terminate \
-                    --metadata-options HttpTokens=required,HttpEndpoint=enabled \
-                    --block-device-mappings "DeviceName=$root_dev,Ebs={VolumeSize=$disk,VolumeType=gp3,DeleteOnTermination=true}" \
-                    --user-data "file://$tmp/user-data.sh" \
-                    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=llm-ctf-$run_id},{Key=Project,Value=$PROJECT_TAG},{Key=RunId,Value=$run_id}]" \
-                    --query 'Instances[0].InstanceId' --output text 2>&1); then
-                instance_id=$out; break 2
-            fi
-            case "$out" in
-                *"Invalid IAM Instance Profile"*|*iamInstanceProfile*) sleep 10 ;;  # new IAM profile still propagating
-                *InsufficientInstanceCapacity*|*Unsupported*) log "No capacity in $az, trying the next zone"; continue 2 ;;
-                *) die "$out" ;;
-            esac
+    # Launch: each usable type in turn, each in every zone that offers it. With
+    # --wait-capacity, the whole list is tried again every 5 minutes.
+    local pass=0 max_passes=$(( 1 + (wait_capacity + 4) / 5 )) line instance_id="" inst_type=""
+    while :; do
+        pass=$((pass + 1))
+        for t in $usable_types; do
+            line=$(printf '%s' "$usable_info" | awk -v t="$t" '$1 == t')
+            [ -n "$line" ] || die "internal error: no record for $t"
+            read -r t mib vcpus azs gname <<< "$line"
+            log "Launching $t"
+            if launch_type_in_zones "$t" "$vcpus" "$azs"; then instance_id=$LAUNCHED_ID; inst_type=$t; break; fi
         done
+        [ -z "$instance_id" ] || break
+        [ "$pass" -lt "$max_passes" ] \
+            || die "no capacity for $(echo "$usable_types" | sed 's/ /, /g') in $REGION. Last error: ${LAST_ERROR%.}. Retry later, pass --wait-capacity MIN, or try another AWS_REGION."
+        log "No capacity for any type. Attempt $((pass + 1)) of $max_passes at $(utc_clock $(( $(date +%s) + 300 ))) UTC (Ctrl-C stops waiting; nothing is running yet)"
+        sleep 300
     done
-    [ -n "$instance_id" ] || die "could not launch $inst_type in any zone of $REGION: $out"
+    [ "$inst_type" = "$primary_type" ] || log "Launched on fallback type $inst_type ($primary_type had no capacity)"
     printf 'LAUNCHED %s %s\n' "$instance_id" "$inst_type" | aws s3 cp - "s3://$BUCKET/runs/$run_id/status" --only-show-errors
 
     cat >&2 <<EOF

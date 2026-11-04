@@ -91,7 +91,12 @@ if [ -n "$JOB_CMD" ]; then
 fi
 
 challenge_file="$OUT/challenges.txt"
-if [ "$CHALLENGES" = "all" ]; then
+if [ -n "${CHALLENGES_FILE:-}" ]; then
+    # Repo-relative path, validated by the launcher: one name per line, # comments
+    # and blank lines allowed.
+    grep -v '^[[:space:]]*#' "$CHALLENGES_FILE" | tr -d '\r' | grep . > "$challenge_file" \
+        || { echo "no challenge names in $CHALLENGES_FILE"; exit 1; }
+elif [ "$CHALLENGES" = "all" ]; then
     # Names are written to a file by Python itself, so nothing printed by the
     # dataset code can end up in the list.
     python - "$SPLIT" "$challenge_file" <<'PY'

@@ -50,6 +50,7 @@ aws sts get-caller-identity
 ```bash
 ./aws/ctf-aws.sh launch --gpu-mem 24                         # one smoke-test challenge
 ./aws/ctf-aws.sh launch --gpu-mem 24 --challenges all        # all 57 development challenges
+./aws/ctf-aws.sh launch --gpu-mem 24 --challenges-file config/challenges/dev-subset-25.txt   # 25-challenge stratified subset
 ```
 
 `launch` shows the instance it chose and asks for confirmation (`-y` skips the prompt). It then prints a **RUN_ID**. The first steps on the instance take about 15–25 minutes: downloading the model, building the `ctfenv` Docker image and installing Python packages. After that the challenges run one after another.
@@ -74,14 +75,16 @@ Your machine can be turned off while a run is in progress. The instance does not
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--gpu-mem GB` | required | Minimum GPU memory. The cheapest single-GPU instance with at least this much is used. |
+| `--gpu-mem GB` | required | Minimum GPU memory. The cheapest single-GPU instance with at least this much is used; the other usable types are fallbacks. |
 | `--challenges LIST` | `2016q-cry-sleeping_guard` | Comma-separated names, or `all` |
+| `--challenges-file FILE` | — | One challenge name per line (`#` comments allowed); must be inside the repo. Cannot be combined with `--challenges` |
 | `--split` | `development` | `development` or `test` |
 | `--model HF_ID` | `Qwen/Qwen2.5-7B-Instruct-AWQ` | Hugging Face checkpoint to serve |
 | `--config FILE` | `config/qwen_baseline.yaml` | Agent config; its `model` is replaced with the served name |
-| `--max-model-len N` | 4096 on GPUs under 40 GB, 32768 otherwise | vLLM context length |
+| `--max-model-len N` | 4096 on GPUs under 20 GB, 32768 otherwise | vLLM context length |
 | `--max-hours H` | 12 | Hard limit; the instance terminates after this |
-| `--instance-type T` | automatic | Force a specific instance type |
+| `--instance-type T` | automatic | Use only this type (no fallback) |
+| `--wait-capacity MIN` | 0 | If no instance type has capacity, retry every 5 minutes for up to MIN minutes |
 | `--keep` | off | Leave the instance running after the job (still bounded by `--max-hours`) |
 | `--dry-run` | off | Show what would be launched, then exit |
 | `-- COMMAND...` | challenge loop | Run any command on the instance; `$RUN_CONFIG` and `$LOG_DIR` are set |
@@ -94,9 +97,11 @@ The region comes from `AWS_REGION` (default `us-west-2`). On our account, the or
 
 | `--gpu-mem` | Instance | GPU | Fits |
 |---|---|---|---|
-| **24** | `g6.xlarge` / `g5.xlarge` | L4 / A10G | **7B baseline** (AWQ about 5.5 GB; BF16 about 15 GB) |
+| **24** | `g6.xlarge` | L4 | **7B baseline** (AWQ about 5.5 GB; BF16 about 15 GB) |
 | 48 | `g6e.xlarge` | L40S | 32B in 4-bit AWQ (about 19 GB) with 32k context, or FP8 |
 | 96 | `g7e.2xlarge` | RTX PRO 6000 | 32B in full BF16 (about 65 GB) |
+
+The table shows the first choice. The launch summary's `Fallbacks` line lists the other types that satisfy `--gpu-mem` and the vCPU quota, cheapest first; when the first type has no capacity in any zone, they are tried in that order (`g6e.xlarge -> g6e.2xlarge -> g7e.2xlarge` for 48). A fallback can cost more than the first choice, so read the summary before confirming, or pass `--instance-type` to pin one type.
 
 To run the 32B model:
 
@@ -106,10 +111,24 @@ To run the 32B model:
 
 To serve any other model, add its served name (the `--model` id without a trailing `-AWQ`) to `VLLMBackend.MODELS` in `llm_ctf/backends/vllm_backend.py`, or pass `--served-name`.
 
+### Challenge subsets
+
+`config/challenges/dev-subset-25.txt` holds 25 of the 57 development challenges, chosen so that every category keeps its share: cry 5/11, for 5/10, msc 3/6, and 4/10 each for pwn, rev and web. Pass it with `--challenges-file`. The run takes about half as long as `--challenges all` and still covers every category.
+
+File format: one challenge name per line; blank lines and lines starting with `#` are ignored; names must not contain whitespace. The file must be inside the repository and not excluded by `.gitignore`, because the instance reads it from the uploaded working tree. The launcher checks all of this before it starts anything.
+
+Other sizes come from the same recipe, which is deterministic (the same list and size always give the same subset):
+
+```bash
+python3 scripts/challenge_subset.py config/challenges/dev-all.txt 40 > config/challenges/dev-subset-40.txt
+```
+
+The script splits the size across categories in proportion to their counts and picks evenly spaced names within each category. A size below the number of categories (6) drops some categories. `config/challenges/dev-all.txt` is the full development split in dataset order, copied from the `Challenges to run (57):` line of run `20261103-233511-6b9b`; its header comment has the command that regenerates it from the installed dataset.
+
 ## How it works
 
 1. **Locally**, `ctf-aws.sh`:
-   - checks the credentials and picks an instance type that is offered in the region and fits your vCPU quota;
+   - checks the credentials and picks the cheapest instance type that is offered in the region and fits your vCPU quota, keeping the other usable types as fallbacks;
    - on first use, creates:
      - the S3 bucket `llm-ctf-runs-<account>-<region>`;
      - the IAM role `llm-ctf-runner`, which can only access that bucket;
@@ -124,7 +143,7 @@ To serve any other model, add its served name (the `--model` id without a traili
 
 ## Costs and safety
 
-- On-demand prices are roughly $0.80/h for `g6.xlarge` and $1.90/h for `g6e.xlarge`. Check current prices for your region.
+- On-demand prices in `us-west-2` are roughly $0.80/h for `g6.xlarge`, $1.86/h for `g6e.xlarge`, $2.24/h for `g6e.2xlarge` and $3.36/h for `g7e.2xlarge` (a fallback can be one of the dearer types). Check current prices for your region.
 - The instance terminates when the job ends or fails. `--max-hours` is a hard limit: the shutdown is scheduled at boot, so it applies even if the job hangs.
 - Run `./aws/ctf-aws.sh status` to check for leftover instances.
 - No inbound ports are opened.
@@ -136,7 +155,8 @@ To serve any other model, add its served name (the `--model` id without a traili
 | Message | Fix |
 |---|---|
 | `no valid AWS credentials` | Set the keys (step 1); check with `aws sts get-caller-identity`. Temporary credentials expire, so get new ones. |
-| `InsufficientInstanceCapacity` / `could not launch ... in any zone` | AWS has no free GPUs of that type right now. Retry later, or try another `AWS_REGION`. |
+| `No capacity for ...` / `no capacity for g6e.xlarge, ... in us-west-2` | AWS has no free GPUs of those types right now. The launcher tries every zone of every usable type before giving up; pass `--wait-capacity 60` to keep retrying every 5 minutes for an hour, `--instance-type` to pin one type, or try another `AWS_REGION`. |
+| `VcpuLimitExceeded` / `quota is used by other running instances` | The G-family vCPU quota (8 on our account) is partly used by another running instance; `./aws/ctf-aws.sh status` lists ours. Wait for it to finish, use `--wait-capacity`, or request a higher quota. |
 | `needs N vCPUs, quota is M` | Request a higher "Running On-Demand G and VT instances" quota under **Service Quotas → EC2**. |
 | Status stays at `LAUNCHED`; the console shows `i/o timeout` | The instance has no outbound internet. Check that the `llm-ctf-runner` security group allows outbound traffic and that the default VPC routes `0.0.0.0/0` to an internet gateway. |
 | `UnauthorizedOperation ... service control policy` | Your organization blocks that region; use another `AWS_REGION`. |

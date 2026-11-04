@@ -9,7 +9,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 | I2 | measuring | agent | Runs end on `context_length` with a 4096-token context |
 | I3 | fixed | runner | Dataset download output was mistaken for challenge names |
 | I4 | fixed | runner | Instance had no outbound network (default security group) |
-| I5 | open | runner | No on-demand capacity for `g6e.xlarge` (48 GB) in `us-west-2` |
+| I5 | fixed | runner | No on-demand capacity for `g6e.xlarge` (48 GB) in `us-west-2` |
 | I6 | fixed | harness | vLLM backend logs omitted tool outputs and user messages |
 | I7 | open | harness | The loop makes `max_rounds + 1` model calls |
 | I8 | open | memory | Memory v1 never shows the latest output verbatim |
@@ -44,10 +44,11 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 - **Observed:** run `20261103-222816-112b`. Status never left `LAUNCHED`; the console showed `i/o timeout` to AWS endpoints. The default VPC's default security group in this account has no egress rule.
 - **Fix:** the launcher creates and uses an outbound-only security group `llm-ctf-runner` (commit `815893a`).
 
-## I5. GPU capacity
+## I5. GPU capacity (fixed)
 
 - **Observed:** 22:26 UTC, `g6e.xlarge` had no on-demand capacity in any `us-west-2` zone. `g6.xlarge` launched after one zone failed.
-- **Next step:** add a fallback to the next instance type that meets `--gpu-mem`, and a `--wait-capacity` option that retries for a bounded time. Started in the launcher but not finished.
+- **Fix:** `aws/ctf-aws.sh launch` keeps every instance type that meets `--gpu-mem` and the vCPU quota, cheapest first, and tries each in every zone before giving up; the pre-launch summary lists the fallbacks (`g6e.xlarge -> g6e.2xlarge -> g7e.2xlarge` for 48 GB) and the status file records the type that launched. `--wait-capacity MIN` repeats the whole list every 5 minutes for up to MIN minutes. `VcpuLimitExceeded` (the quota is used by another of our instances) counts as no capacity for that type. `--instance-type` pins one type with no fallback. See `docs/aws.md`.
+- **Verified with:** a stub AWS CLI covering the fallback, wait, quota, IAM-retry and fatal-error paths, and `--dry-run` against the account. Not yet exercised by a real capacity shortage; while run `6b9b` uses 4 of the 8 G-vCPUs, every 8-vCPU fallback would hit `VcpuLimitExceeded`.
 
 ## I6. Incomplete conversation logs (fixed)
 

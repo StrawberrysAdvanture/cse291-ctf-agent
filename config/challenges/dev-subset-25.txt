@@ -1,0 +1,26 @@
+# 25 of 57 development challenges, stratified by category; regenerate with: python3 scripts/challenge_subset.py config/challenges/dev-all.txt 25
+2013q-cry-csawpad
+2013q-cry-slurp
+2015q-cry-eps
+2016f-cry-katy
+2016q-cry-broken_box
+2015q-for-flash
+2015q-for-sharpturn
+2016q-for-clams_dont_dance
+2016q-for-kill
+2016q-for-yaar_haar_fiddle_dee_dee
+2013q-msc-networking_1
+2014f-msc-pps
+2016q-msc-regexpire
+2014f-pwn-kernel
+2014q-pwn-the_road_less_traveled
+2016f-pwn-detective
+2016q-pwn-tutorial
+2014f-rev-return_of_the_weiner
+2014q-rev-weissman
+2015q-rev-wyvern
+2016q-rev-deedeedee
+2013q-web-guess_harder
+2014q-web-silkgoat
+2016f-web-cloudb
+2016q-web-i_got_id
