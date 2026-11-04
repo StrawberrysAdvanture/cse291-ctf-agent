@@ -54,7 +54,7 @@ def challenge_stats(log, early_calls):
             for tc in calls:
                 fn = tc.get("function") or {}
                 keys.append(f"{fn.get('name', '')} {fn.get('arguments', '')}".strip())
-                if fn.get("name") == "checkflag":
+                if fn.get("name") in ("check_flag", "checkflag"):
                     flag_checks += 1
         elif role == "tool":
             tool_results += 1
@@ -167,7 +167,7 @@ def report(logs, name, early_calls):
     w(f"| Challenges with at least one repeat | {sum(1 for r in rows.values() if r['repeats'])} |")
     w(f"| Tool results that were errors | {sum(r['tool_errors'] for r in rows.values())} |")
     w(f"| Commands that timed out | {sum(r['timeouts'] for r in rows.values())} |")
-    w(f"| checkflag calls | {sum(r['flag_checks'] for r in rows.values())} |")
+    w(f"| check_flag calls | {sum(r['flag_checks'] for r in rows.values())} |")
     w("")
 
     w("## Per challenge\n")

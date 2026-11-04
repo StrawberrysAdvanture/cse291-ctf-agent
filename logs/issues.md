@@ -6,7 +6,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 | ID | Status | Area | Issue |
 |---|---|---|---|
 | I1 | mitigation implemented, untested | agent | The model repeats the same action (same command, same output) across rounds |
-| I2 | measuring | agent | Runs end on `context_length` with a 4096-token context |
+| I2 | fixed as the main limiter; see I12 | agent | Runs end on `context_length` with a 4096-token context |
 | I3 | fixed | runner | Dataset download output was mistaken for challenge names |
 | I4 | fixed | runner | Instance had no outbound network (default security group) |
 | I5 | fixed | runner | No on-demand capacity for `g6e.xlarge` (48 GB) in `us-west-2` |
@@ -15,6 +15,8 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 | I8 | open | memory | Memory v1 never shows the latest output verbatim |
 | I9 | mitigation implemented, untested | agent | Replies with no tool call: the model describes steps instead of running them |
 | I10 | fixed | runner | Challenges whose service publishes port 8000 could not start: vLLM was bound to that port |
+| I11 | open | harness | Tool calls lost to format slips: `<invoke>` without the `<function_calls>` wrapper (69 of 101 no-tool replies), schema-style parameters (26 of 41 tool errors) |
+| I12 | open | harness | No per-output size cap: one `cat` of a binary produced 2.6 MB and overran the 32k context |
 
 ## I1. Repeated actions
 
@@ -27,13 +29,14 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
   3. A pinned facts block (`facts: true`) so exact values survive summarization.
   4. A harness-side check: if a tool call repeats an earlier one, append a note to the tool result ("you already ran this at action N; the output was the same") instead of running it again. Not implemented.
 - **Change (2026-11-04):** harness-side detection implemented in `llm_ctf/repeats.py` and `CTFConversation.run_tools` (`repeat_detection: off | note | skip`, default `off`). The key is the tool name plus the parsed arguments with defaults filled in, so `run_command(command="ls")` and `run_command(command="ls", timeout=10)` match. `note` runs the call again and adds `note: "Same call as in round N; the output is identical."` (or "differs") to the result; `skip` returns the stored result with a note instead of running it (can be stale if the container changed). Every log, including baseline logs, now carries `repeat_detection.count` and one entry per repeat (`round`, `earlier_rounds`, `tool`, `arguments`, `action`, `identical`); this is the authoritative count (slightly broader than `scripts/paired_analysis.py`, which compares logged commands verbatim). The note reaches the memory block under all three summarizers. `config/qwen_harness.yaml` enables `note`.
-- **Next step:** read the per-challenge repeat counts from the 32k baseline, look at 3–5 transcripts with repeats to see whether the repeat follows an identical, a summarized, or an empty output; then run `qwen_harness.yaml` against the baseline and compare `repeat_detection.count` and the share of `identical: true` repeats.
+- **What the repeats follow (`findings.md`, run `6b9b`):** 104 of 114 repeats reproduced byte-identical output; 73 followed a call that had produced a real result (57 outputs, 16 `check_flag` verdicts), 25 an error, 15 an empty output, 1 a time-out. 56 of 114 are duplicate invokes inside one reply (up to 16 invokes in one block); 58 are across rounds. Longest chain: `2013f-web-historypeats`, the same `curl` five times with the identical error. So repeats follow outcomes the model had already seen, which is the case for memory of outcomes (latest action verbatim, merged earlier-actions list, facts) and for `repeat_detection`. `note` is the safer mode: 10 of 114 repeats produced different output (network reads), which `skip` would serve stale.
+- **Next step:** run `qwen_harness.yaml` (repeat_detection: note) against the baseline and compare `repeat_detection.count` and the share of `identical: true` repeats; consider `skip` for duplicates within one reply only.
 
 ## I2. Context length
 
 - **Observed:** run `7a17` (baseline, 4096 tokens), challenge `2013f-cry-stfu`: `finish_reason: context_length` after only **two** model calls (`prompt_tokens: [1000, 2045]`). The reply limit is 1024 tokens and vLLM rejects a request when prompt + reply limit exceeds the context, so at 4k the baseline cannot complete three rounds once the model writes long replies. NYU CTF Bench reports token overflow as 24.56% of GPT-3.5 failures. Log: `logs/runs/20261103-225656-7a17-baseline-4k-partial/`.
 - **Change:** the AWS runner now serves the model's full 32,768-token context on GPUs with 20 GB or more (`aws/remote/job.sh`). The second paired run uses 32k.
-- **Next step:** compare `prompt_tokens` and `finish_reason: context_length` counts between the 4k logs (`logs/runs/*-7a17-*`, `*-7074-*`, partial) and the 32k runs.
+- **Result at 32k (run `6b9b`):** 3 of 47 runs ended on `context_length`, each from a single oversized tool output, not from accumulated history: `cat` of a binary (2,631,277 chars), `strings` on an mp4 (167,243 chars), an 11-invoke reply with 80,394 chars of disassembly. Recorded prompts never exceeded 7,375 tokens. At 4k, 25 of 47 challenges would have overflowed (prompt > 3,072 with the 1,024-token reply budget), most at call 3–4. The context increase removed the main limiter; the remaining need is a per-output cap (I12).
 
 ## I3. Dataset download output mistaken for challenge names (fixed)
 
@@ -66,7 +69,8 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 - **Why it matters:** rounds spent on prose are lost, and memory cannot help a run that never produces an observation.
 - **How to measure:** share of model calls with zero tool calls, per arm (`tool_calls` per challenge in `scripts/paired_analysis.py`; a per-call count is easy to add).
 - **Change (2026-11-04):** `no_tool_nudge` (`--no-tool-nudge on`, `parameter.no_tool_nudge: true`, default off). After a reply with no tool call the harness sends the `no_tool_call` prompt: it says that nothing ran, shows a full `run_command` example in the formatter's syntax (`ls ~/ctf_files`) and lists the available tools, instead of "Please proceed to the next step using your best judgment." Costs roughly 90–110 tokens per prose-only round. With memory on, the nudge takes the place of "Choose your next action." after the memory block. Logs now carry `no_tool_call` (`count`, `rounds`, `nudges_sent`) in every mode. Not implemented: a lower `max_tokens` for prose replies; a one-off format re-prompt.
-- **Next step:** compare `no_tool_call.count` per arm between the baseline and `qwen_harness.yaml` runs, and check whether the round after a nudge contains a tool call.
+- **What the 101 contain (`findings.md`, run `6b9b`):** 69 are a full `<invoke>` block without the `<function_calls>` wrapper (the command is usually valid; the harness drops it and, with no stop sequence reached, generation runs to the 1,024-token cap in 38 of them); 32 are genuine prose; 0 are markdown or JSON calls. The rate is flat across rounds (52–59%). After "Please proceed", the next reply had a tool call in only 10 of 76 cases. The same challenge (`2015q-cry-eps_part2`) wrapped correctly in rounds 2 and 4 and not in 1 and 3, so it is a slip, not an inability. The nudge therefore addresses the 32 prose cases; the 69 need the parsing change in I11.
+- **Next step:** implement I11 first; then compare `no_tool_call.count` per arm between the baseline and `qwen_harness.yaml` runs, separating "prose" from "unwrapped invoke".
 
 ## I8. Latest output never verbatim (memory v1)
 
@@ -80,3 +84,17 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 - **Cause:** the three compose files (read from the dataset repository) publish host port `8000:8000`, and the runner serves vLLM on host port 8000, so `docker compose up` fails with a port conflict. The local setup guide uses port 8000 for vLLM too, so its suggested smoke test (`2016q-cry-sleeping_guard`) would hit the same conflict.
 - **Fix:** `aws/remote/job.sh` now publishes vLLM on host port 18000 (`VLLM_PORT`), and `keys.cfg` points there; `docs/local-setup.md` has a troubleshooting row. `CTFConversation.__enter__` also prints compose's output on such failures (`fbca814`).
 - **Consequence for the results:** the baseline solve rate is over 47 challenges, not 57. A memory run on the old port would have lost the same 10, so paired comparisons would have been unaffected; runs after `e31db05` include them.
+
+## I11. Tool calls lost to format slips
+
+- **Observed (run `6b9b`, `findings.md`):** 69 of the 101 replies without a tool call contain a complete `<invoke>…</invoke>` block, usually inside a ```` ```xml ```` fence, but no `<function_calls>` wrapper. `VLLMBackend.call_model_internal` recognizes a tool call only when the literal `<function_calls>` is in the reply, and the only stop sequence is `</function_calls>`, so these replies run to the token cap and nothing is executed. Separately, 26 of the 41 tool errors are parameters written in the tool-description schema (`<parameter><name>command</name><type>string</type><value>…</value></parameter>`) instead of `<command>…</command>`; `extract_params` then reports a missing argument. Together these account for most of the run's lost actions. The system prompt also calls the flag tool `checkflag` (`tool_use.md.jinja2`) while the tool is `check_flag`; the model used the right name anyway (34 calls).
+- **Why it matters:** 55.8% of replies produced no observation. Memory cannot help a run that produces nothing to remember, and the nudge (I9) only targets the 32 prose replies.
+- **Candidate fix (harness, no model change, config-gated):** accept a bare `<invoke>` as a tool call (treat `<invoke>` as a start marker and add `</invoke>` as a stop sequence, which also ends the batch-of-16 behaviour by taking one call per reply); accept `<parameter><name>X</name>…<value>V</value>` as `X=V` in `extract_params`; fix the `checkflag` name in the prompt. Measure the recovered call count against the baseline logs offline before running.
+- **Next step:** implement as `lenient_tool_calls: true` (off by default) and re-parse the 47 baseline transcripts to count how many lost calls it would have recovered.
+
+## I12. No per-output size cap
+
+- **Observed (run `6b9b`):** `run_command` returns stdout and stderr without any limit. `cat` of a binary returned 2,631,277 characters and `strings -t d` on an mp4 167,243; both overran the 32k context on the next call. One reply with 11 disassembly invokes returned 80,394 characters in total.
+- **Why it matters:** any context size can be overrun by one command; a memory summarizer handed a 2.6 MB observation will truncate or fail; the `truncate`/`mask` summarizers already shorten per value, but the raw tail and the baseline do not.
+- **Candidate fix:** cap each tool result at the tool boundary (for example 20,000 characters, head and tail kept, with a note stating how much was cut and that the full output can be re-read with `head`/`sed -n`), configurable; EnIGMA and D-CIPHER do this (25,000 characters in D-CIPHER). Save the full output to a file when `save_outputs` is on.
+- **Next step:** implement as `parameter.max_output_chars` (0 = off, the baseline), and rerun the three overflowing challenges.

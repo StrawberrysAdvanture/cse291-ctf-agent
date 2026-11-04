@@ -46,7 +46,7 @@ Challenges: **47**. Solved: **0** (0.0%). Solved within the first 4 model calls:
 | Challenges with at least one repeat | 23 |
 | Tool results that were errors | 41 |
 | Commands that timed out | 6 |
-| checkflag calls | 0 |
+| check_flag calls | 34 |
 
 ## Per challenge
 
