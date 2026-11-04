@@ -10,11 +10,11 @@ TODO before submission: confirm final commit hash; export to PDF.
 
 **Team:** Steven Zhang, Benjamin Yu, Jackie Liu · **Option 7** · **Repo:** https://github.com/StrawberrysAdvanture/cse291-ctf-agent
 
-**Research question.** How well does a *small, self-hosted* model (7B, 4-bit, on a single mid-range
-GPU) solve CTF challenges under a fixed step and token budget, and **what limits it** — model
-capability, the tool interface, lost intermediate findings, or unproductive loops? We establish a
-reproducible baseline, measure its execution behavior, and use the failure breakdown to justify a
-Phase 2 direction.
+> **Research question.** How well does a *small, self-hosted* model (7B, 4-bit, on a single
+> mid-range GPU) solve CTF challenges under a fixed step and token budget, and **what limits it** —
+> model capability, the tool interface, lost intermediate findings, or unproductive loops? We
+> establish a reproducible baseline, measure its execution behavior, and use the failure breakdown
+> to justify a Phase 2 direction.
 
 ## 1. Setup
 
