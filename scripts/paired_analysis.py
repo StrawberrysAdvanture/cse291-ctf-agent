@@ -75,21 +75,25 @@ def repeat_stats(log):
     return len(keys), repeats
 
 
-def summarize_arm(log):
+def summarize_arm(log, early_calls=4):
     """Per-challenge metrics for one arm (log may be None if the run crashed before logging)."""
     if log is None:
-        return {"solved": False, "finish": "no_log", "rounds": None, "calls": None,
+        return {"solved": False, "early": False, "finish": "no_log", "rounds": None, "calls": None,
                 "max_prompt": None, "mean_prompt": None, "runtime": None, "model_time": None,
                 "category": None, "memory": None, "tool_calls": None, "repeats": None}
     tokens = log.get("prompt_tokens") or []
     challenge = log.get("challenge") or {}
     n_calls, n_repeats = repeat_stats(log)
+    solved = bool(log.get("solved"))
+    rounds = log.get("rounds")
     return {
         "tool_calls": n_calls,
         "repeats": n_repeats,
-        "solved": bool(log.get("solved")),
+        "solved": solved,
+        # rounds counts the model calls; solved within the first early_calls of them
+        "early": solved and rounds is not None and rounds <= early_calls,
         "finish": log.get("finish_reason") or "unknown",
-        "rounds": log.get("rounds"),
+        "rounds": rounds,
         "calls": len(tokens) if tokens else None,
         "max_prompt": max(tokens) if tokens else None,
         "mean_prompt": statistics.mean(tokens) if tokens else None,
@@ -100,12 +104,12 @@ def summarize_arm(log):
     }
 
 
-def analyze(a_logs, b_logs, names):
+def analyze(a_logs, b_logs, names, early_calls=4):
     na, nb = names
     challenges = sorted(set(a_logs) | set(b_logs))
     rows = []
     for ch in challenges:
-        A, B = summarize_arm(a_logs.get(ch)), summarize_arm(b_logs.get(ch))
+        A, B = summarize_arm(a_logs.get(ch), early_calls), summarize_arm(b_logs.get(ch), early_calls)
         category = A["category"] or B["category"] or (ch.split("-")[1] if "-" in ch else "?")
         rows.append((ch, category, A, B))
 
@@ -123,9 +127,17 @@ def analyze(a_logs, b_logs, names):
     w(f"Challenges paired: **{n}** (logs found: {na} {len(a_logs)}, {nb} {len(b_logs)})\n")
     w("## Solve rate\n")
     w(f"| | {na} | {nb} |\n|---|---|---|")
-    w(f"| Solved | {a_solved}/{n} ({100*a_solved/max(n,1):.1f}%) | {b_solved}/{n} ({100*b_solved/max(n,1):.1f}%) |\n")
+    w(f"| Solved | {a_solved}/{n} ({100*a_solved/max(n,1):.1f}%) | {b_solved}/{n} ({100*b_solved/max(n,1):.1f}%) |")
+    a_early = sum(r[2]["early"] for r in rows)
+    b_early = sum(r[3]["early"] for r in rows)
+    w(f"| Solved within the first {early_calls} model calls | {a_early}/{n} ({100*a_early/max(n,1):.1f}%) "
+      f"| {b_early}/{n} ({100*b_early/max(n,1):.1f}%) |\n")
     w(f"Paired outcomes: both solved {both}, only {na} {len(only_a)}, only {nb} {len(only_b)}, neither {neither}.  ")
-    w(f"Exact McNemar test on the {len(only_a) + len(only_b)} discordant pairs: p = {exact_mcnemar(len(only_a), len(only_b)):.3f}.\n")
+    w(f"Exact McNemar test on the {len(only_a) + len(only_b)} discordant pairs: p = {exact_mcnemar(len(only_a), len(only_b)):.3f}.  ")
+    early_both = sum(r[2]["early"] and r[3]["early"] for r in rows)
+    early_only_a = sum(r[2]["early"] and not r[3]["early"] for r in rows)
+    early_only_b = sum(r[3]["early"] and not r[2]["early"] for r in rows)
+    w(f"Early paired outcomes: both {early_both}, only {na} {early_only_a}, only {nb} {early_only_b}.\n")
     if only_a:
         w(f"- Solved only by {na}: " + ", ".join(f"`{c}`" for c in only_a))
     if only_b:
@@ -191,7 +203,9 @@ def analyze(a_logs, b_logs, names):
         pos, neg, p = sign_test([b - a for a, b in rp])
         w(f"Paired: {nb} has more repeats in {pos} challenges, fewer in {neg}; sign test p = {p:.3g}.\n")
 
-    mem_entries = [m for r in rows for m in (r[3]["memory"] or [])]
+    # Entries with summary_chars 0 were still in the raw tail when the run ended (summary null);
+    # they were never summarized, so they are left out of the summary statistics.
+    mem_entries = [m for r in rows for m in (r[3]["memory"] or []) if m.get("summary_chars")]
     if mem_entries:
         w(f"## Memory summaries ({nb})\n")
         by = Counter(m.get("summarizer") for m in mem_entries)
@@ -226,9 +240,11 @@ def main():
     parser.add_argument("a_dir")
     parser.add_argument("b_dir")
     parser.add_argument("--names", nargs=2, default=["baseline", "memory"])
+    parser.add_argument("--early-calls", type=int, default=4,
+                        help="count challenges solved within this many model calls (a 3-round run makes 4)")
     parser.add_argument("-o", "--output")
     args = parser.parse_args()
-    report = analyze(load_logs(args.a_dir), load_logs(args.b_dir), args.names)
+    report = analyze(load_logs(args.a_dir), load_logs(args.b_dir), args.names, early_calls=args.early_calls)
     if args.output:
         Path(args.output).write_text(report)
     print(report)
