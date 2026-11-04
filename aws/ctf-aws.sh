@@ -60,6 +60,9 @@ launch options:
   --max-model-len N    vLLM context length (default: 32768, the model's full
                        context, on GPUs with >= 20 GB; 4096 on smaller GPUs).
   --max-hours H        Hard limit; the instance terminates after H hours (default: 12).
+  --challenge-minutes M
+                       Time limit per challenge; a challenge still running after M
+                       minutes is killed and the job moves on (default: 45).
   --disk GB            Root volume size (default: 200).
   --instance-type T    Use only this type (no fallback).
   --wait-capacity MIN  If no type has capacity, retry every 5 minutes for up to
@@ -232,7 +235,7 @@ launch_type_in_zones() {
 
 cmd_launch() {
     local gpu_mem="" model="Qwen/Qwen2.5-7B-Instruct-AWQ" served="" config="config/qwen_baseline.yaml"
-    local challenges="2016q-cry-sleeping_guard" split="development" max_len="" max_hours=12
+    local challenges="2016q-cry-sleeping_guard" split="development" max_len="" max_hours=12 challenge_min=45
     local disk=200 itype="" keep=0 yes=0 dry=0 job_cmd="" wait_capacity=0
     local challenges_file="" challenges_given=0 n_chal=""
     while [ $# -gt 0 ]; do
@@ -246,6 +249,7 @@ cmd_launch() {
             --split) split=$2; shift 2 ;;
             --max-model-len) max_len=$2; shift 2 ;;
             --max-hours) max_hours=$2; shift 2 ;;
+            --challenge-minutes) challenge_min=$2; shift 2 ;;
             --disk) disk=$2; shift 2 ;;
             --instance-type) itype=$2; shift 2 ;;
             --wait-capacity) wait_capacity=$2; shift 2 ;;
@@ -261,6 +265,7 @@ cmd_launch() {
     [ -n "$gpu_mem" ] || [ -n "$itype" ] || die "--gpu-mem is required (e.g. --gpu-mem 24)"
     case "$gpu_mem" in ''|*[!0-9]*) [ -n "$itype" ] || die "--gpu-mem must be a whole number of GB" ;; esac
     case "$max_hours" in ''|*[!0-9]*|0) die "--max-hours must be a positive whole number" ;; esac
+    case "$challenge_min" in ''|*[!0-9]*|0) die "--challenge-minutes must be a positive whole number" ;; esac
     case "$wait_capacity" in ''|*[!0-9]*) die "--wait-capacity must be a whole number of minutes" ;; esac
     [ -n "$served" ] || served="${model%-AWQ}"
     [ -f "$REPO_ROOT/$config" ] || die "config file not found: $config"
@@ -346,7 +351,7 @@ EOF
         echo "  Model         $model  (served as $served)"
         echo "  Job           $job_desc"
         echo "  Config        $config"
-        echo "  Time limit    ${max_hours}h, then the instance terminates"
+        echo "  Time limit    ${max_hours}h, then the instance terminates; ${challenge_min} min per challenge"
         echo "  Outputs       s3://$BUCKET/runs/$run_id/"
         if [ -n "$skipped" ]; then echo "  Skipped      $skipped"; fi
         echo
@@ -384,6 +389,7 @@ EOF
         printf 'AGENT_CONFIG=%q\n' "$config"
         printf 'CHALLENGES=%q\n' "$challenges"
         printf 'CHALLENGES_FILE=%q\n' "$challenges_file"
+        printf 'CHALLENGE_TIMEOUT_MIN=%q\n' "$challenge_min"
         printf 'SPLIT=%q\n' "$split"
         printf 'MAX_MODEL_LEN=%q\n' "$max_len"
         printf 'VLLM_IMAGE=%q\n' "${VLLM_IMAGE:-$VLLM_IMAGE_DEFAULT}"

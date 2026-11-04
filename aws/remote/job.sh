@@ -119,8 +119,17 @@ while IFS= read -r chal; do
     [ -n "$chal" ] || continue
     n=$((n + 1))
     set_status "RUNNING challenge $n/$total: $chal"
-    if ! python llm_ctf_solve.py --challenge "$chal" --split "$SPLIT" \
-            --config "$RUN_CONFIG" -L "$LOG_DIR"; then
+    # Issue I14: one challenge that never finished (a Ghidra call with no time limit)
+    # blocked a whole run. `timeout` sends SIGTERM to the process group after the
+    # limit and SIGKILL 30 s later; llm_ctf_solve.py turns SIGTERM into a normal exit
+    # so the conversation log is still written.
+    rc=0
+    timeout -k 30 "${CHALLENGE_TIMEOUT_MIN:-45}m" python llm_ctf_solve.py --challenge "$chal" \
+        --split "$SPLIT" --config "$RUN_CONFIG" -L "$LOG_DIR" || rc=$?
+    if [ "$rc" = 124 ] || [ "$rc" = 137 ]; then
+        echo "!!! llm_ctf_solve.py timed out after ${CHALLENGE_TIMEOUT_MIN:-45} minutes on $chal (issue I14)"
+        crashed=$((crashed + 1))
+    elif [ "$rc" != 0 ]; then
         echo "!!! llm_ctf_solve.py exited with an error on $chal"
         crashed=$((crashed + 1))
     fi

@@ -1,3 +1,5 @@
+import os
+import signal
 import subprocess
 import json
 import re
@@ -10,6 +12,48 @@ from ..ctflogging import status
 
 SCRIPT_DIR = Path(__file__).parent.parent.parent.resolve()
 GHIDRA = SCRIPT_DIR / "ghidra_11.0.1_PUBLIC/support/analyzeHeadless"
+# Issue I14: Ghidra ran with no time limit, and one decompile that never finished hung a
+# whole run. Seconds per Ghidra invocation; 0 disables the limit.
+GHIDRA_TIMEOUT = float(os.environ.get("GHIDRA_TIMEOUT", "600"))
+
+
+def run_ghidra_script(challenge, binary, script, output, timeout=None):
+    """Run a Ghidra headless script on the challenge's copy of `binary`; the script writes
+    JSON to `output`. Returns None on success or a short reason for the failure."""
+    timeout = GHIDRA_TIMEOUT if timeout is None else timeout
+    real_binary = next(challenge.challenge_dir.glob(f'**/{binary}'), None)
+    if not real_binary or not real_binary.exists():
+        return "binary not found in the challenge files"
+    status.debug_message(f"Real binary path: {real_binary}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = [GHIDRA, tmpdir, "DummyProj", "-scriptpath", SCRIPT_DIR / 'llm_ctf/ghidra_scripts',
+               "-import", real_binary, "-postscript", script, output]
+        # analyzeHeadless is a shell script that starts java; a new session puts the whole
+        # tree in one process group so that a timeout kills all of it.
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+        def kill_group():
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+
+        try:
+            proc.wait(timeout=timeout or None)
+        except subprocess.TimeoutExpired:
+            kill_group()
+            status.debug_message(f"Ghidra timed out after {timeout:.0f}s on {binary}")
+            return f"Ghidra timed out after {timeout:.0f} seconds"
+        except BaseException:
+            # Interrupted (for example by the job's per-challenge time limit): do not
+            # leave Ghidra running in its own session.
+            kill_group()
+            raise
+        if not output.exists():
+            return f"Ghidra exited with status {proc.returncode} without writing its output"
+    return None
 
 class CommandExec(Tool):
     NAME = "run_command"
@@ -184,8 +228,8 @@ class Decompile(Tool):
             if decomp_output.exists():
                 self._decomp_cache[basename] = json.loads(decomp_output.read_text())
             else:
-                if not self.run_ghidra(basename, decomp_output):
-                    return {"error": f"Decompilation for {binary} not available"}
+                if reason := self.run_ghidra(basename, decomp_output):
+                    return {"error": f"Decompilation for {binary} not available: {reason}"}
                 self._decomp_cache[basename] = json.loads(decomp_output.read_text())
 
         if found := self.find_function(self._decomp_cache[basename], function):
@@ -195,20 +239,7 @@ class Decompile(Tool):
 
     def run_ghidra(self, binary, output):
         status.debug_message(f"Running Ghidra to decompile {binary}...")
-        binary_paths = self.challenge.challenge_dir.glob(f'**/{binary}')
-        real_binary = next(binary_paths, None)
-        if not real_binary or not real_binary.exists():
-            return False
-        status.debug_message(f"Real binary path: {real_binary}")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-            subprocess.run(
-                [GHIDRA, tmpdir, "DummyProj", "-scriptpath", SCRIPT_DIR / 'llm_ctf/ghidra_scripts',
-                 "-import", real_binary, "-postscript", "DecompileToJson.java", output],
-                check=False, capture_output=True,
-            )
-            return output.exists()
+        return run_ghidra_script(self.challenge, binary, "DecompileToJson.java", output)
 
 class Disassemble(Tool):
     NAME = "disassemble_function"
@@ -255,8 +286,8 @@ class Disassemble(Tool):
             if disasm_output.exists():
                 self._disasm_cache[basename] = json.loads(disasm_output.read_text())
             else:
-                if not self.run_ghidra(basename, disasm_output):
-                    return {"error": f"Disassembly for {binary} not available"}
+                if reason := self.run_ghidra(basename, disasm_output):
+                    return {"error": f"Disassembly for {binary} not available: {reason}"}
                 self._disasm_cache[basename] = json.loads(disasm_output.read_text())
 
         if found := self.find_function(self._disasm_cache[basename], function):
@@ -266,17 +297,4 @@ class Disassemble(Tool):
 
     def run_ghidra(self, binary, output):
         status.debug_message(f"Running Ghidra to disassemble {binary}...")
-        binary_paths = self.challenge.challenge_dir.glob(f'**/{binary}')
-        real_binary = next(binary_paths, None)
-        if not real_binary or not real_binary.exists():
-            return False
-        status.debug_message(f"Real binary path: {real_binary}")
-        output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmpdir = Path(tmpdir)
-            subprocess.run(
-                [GHIDRA, tmpdir, "DummyProj", "-scriptpath", SCRIPT_DIR / 'llm_ctf/ghidra_scripts',
-                 "-import", real_binary, "-postscript", "DisassembleToJson.java", output],
-                check=False, capture_output=True,
-            )
-            return output.exists()
+        return run_ghidra_script(self.challenge, binary, "DisassembleToJson.java", output)

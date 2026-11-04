@@ -28,7 +28,10 @@ public class DecompileToJson extends GhidraScript {
         ifc.openProgram(currentProgram);
 
         for (var func : currentProgram.getListing().getFunctions(Boolean.TRUE)) {
-            DecompileResults res = ifc.decompileFunction(func,0,monitor);
+            // 60-second limit per function (0 meant no limit; one function that never
+            // finished decompiling hung a whole run, issue I14). A function that times
+            // out is skipped like any other decompile failure.
+            DecompileResults res = ifc.decompileFunction(func,60,monitor);
             if (!res.decompileCompleted()) {
                 System.err.println(res.getErrorMessage());
                 continue;

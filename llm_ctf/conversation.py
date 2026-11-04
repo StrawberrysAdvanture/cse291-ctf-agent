@@ -273,6 +273,9 @@ class CTFConversation:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.end_time = now()
+        if exc_type is SystemExit and self.finish_reason == "unknown":
+            # Issue I14: killed by the job's per-challenge time limit (SIGTERM -> SystemExit).
+            self.finish_reason = "killed"
         self.environment.teardown(exc_type, exc_value, traceback)
         self.challenge.stop_challenge_container()
 

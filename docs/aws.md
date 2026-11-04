@@ -83,6 +83,7 @@ Your machine can be turned off while a run is in progress. The instance does not
 | `--config FILE` | `config/qwen_baseline.yaml` | Agent config; its `model` is replaced with the served name |
 | `--max-model-len N` | 4096 on GPUs under 20 GB, 32768 otherwise | vLLM context length |
 | `--max-hours H` | 12 | Hard limit; the instance terminates after this |
+| `--challenge-minutes M` | 45 | Per-challenge limit; a challenge still running after M minutes is killed (its log is written with `finish_reason: killed`) and the job moves on |
 | `--instance-type T` | automatic | Use only this type (no fallback) |
 | `--wait-capacity MIN` | 0 | If no instance type has capacity, retry every 5 minutes for up to MIN minutes |
 | `--keep` | off | Leave the instance running after the job (still bounded by `--max-hours`) |
@@ -144,7 +145,7 @@ The script splits the size across categories in proportion to their counts and p
 ## Costs and safety
 
 - On-demand prices in `us-west-2` are roughly $0.80/h for `g6.xlarge`, $1.86/h for `g6e.xlarge`, $2.24/h for `g6e.2xlarge` and $3.36/h for `g7e.2xlarge` (a fallback can be one of the dearer types). Check current prices for your region.
-- The instance terminates when the job ends or fails. `--max-hours` is a hard limit: the shutdown is scheduled at boot, so it applies even if the job hangs.
+- The instance terminates when the job ends or fails. `--max-hours` is a hard limit: the shutdown is scheduled at boot, so it applies even if the job hangs. `--challenge-minutes` bounds each challenge so that one hung tool call cannot block the rest of the run (issue I14); Ghidra calls are additionally limited to `GHIDRA_TIMEOUT` seconds (default 600).
 - Run `./aws/ctf-aws.sh status` to check for leftover instances.
 - No inbound ports are opened.
 - `HF_TOKEN` (needed only for gated models) is passed through instance user-data, which other users of the AWS account can read. Use a read-only token.

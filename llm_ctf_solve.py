@@ -7,6 +7,8 @@ import os
 import argparse
 import shutil
 import getpass
+import signal
+import sys
 import yaml
 from pathlib import Path
 
@@ -195,6 +197,11 @@ def main():
                         formatter=args.formatter,
                         args=args
                     )
+
+    # Issue I14: the AWS job loop bounds each challenge with `timeout`, which sends SIGTERM.
+    # Python's default handler would exit at once; raising SystemExit instead lets the
+    # conversation's __exit__ tear the containers down and write the log.
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(143))
 
     with CTFConversation(environment, challenge, prompt_manager, backend, logfile, max_rounds=args.max_rounds, max_cost=args.max_cost, args=args,
                          repeat_detection=args.repeat_detection, no_tool_nudge=args.no_tool_nudge,
