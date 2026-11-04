@@ -146,15 +146,14 @@ def test_alignment_on_handmade_log(tmp_path):
     assert by_kind[("llm", "hostport")] == {"found": 1, "present": 0}
     assert by_kind[("llm", "address")] == {"found": 1, "present": 0}
     assert by_kind[("llm", "credential")] == {"found": 1, "present": 0}
-    # The path pattern also matches the host part of the URL, so two paths are found.
-    assert by_kind[("llm", "path")] == {"found": 2, "present": 1}
+    assert by_kind[("llm", "path")] == {"found": 1, "present": 1}   # the URL host is not a path
     assert not any(s == "truncate" for s, _ in by_kind)   # the error text holds no value
 
     worst = stats["worst"]
     assert (worst[0].challenge, worst[0].step, worst[0].summarizer) == ("demo", 1, "llm")
     assert ("url", URL) in worst[0].lost and ("address", "0xdeadbeef") in worst[0].lost
     assert ("flag", FLAG) in worst[0].present and ("path", PATH) in worst[0].present
-    assert worst[0].recall == 2 / 7
+    assert worst[0].recall == 2 / 6
     assert worst[0].compression == 400 / len(log["memory"][0]["summary"])
     assert len(worst) == 1                   # action 3 has no value to check
 
@@ -165,8 +164,8 @@ def test_alignment_on_handmade_log(tmp_path):
     assert report.startswith("# Summary fidelity: run\n")
     assert "Actions aligned: 2; entries skipped: raw tail (summary null) 1, no tool output 1; final actions without entry 1." in report
     assert "| llm | url | 1 | 0 | 0.0% |" in report
-    assert "| llm | all kinds | 7 | 2 | 28.6% |" in report
-    assert f"| demo | 1 | llm | 29% (2/7) | " in report and f"url: `{URL}`" in report
+    assert "| llm | all kinds | 6 | 2 | 33.3% |" in report
+    assert f"| demo | 1 | llm | 33% (2/6) | " in report and f"url: `{URL}`" in report
     assert "fell back to `truncate`" in report and "demo#3" in report
     assert "RuntimeError: endpoint down" in report
 

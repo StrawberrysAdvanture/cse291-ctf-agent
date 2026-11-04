@@ -75,7 +75,7 @@ The defaults are sized for a 4096-token context. The system prompt with tool des
 |---|---|---|
 | `llm` | The model is asked (prompt: `prompts/templates/default/memory_summarize.md.jinja2`) to summarize the action in ≤ `max_summary_words` words. It must copy exact values (paths, addresses, keys, errors, flag-like strings) and must not suggest next steps. | One extra model call per action |
 | `truncate` | No model call: the reasoning, the tool calls, and the start and end of each output. | None |
-| `mask` | No model call: the reasoning and the tool calls; each output replaced by `output omitted (N lines)`, keeping the return code and short error messages. | None |
+| `mask` | No model call: the reasoning and the tool calls; each output replaced by `output omitted (N lines, M chars)`, keeping the return code and short error messages. | None |
 
 If an `llm` summary fails (request error or empty reply), that action falls back to `truncate`, and the log records which summarizer produced each summary.
 

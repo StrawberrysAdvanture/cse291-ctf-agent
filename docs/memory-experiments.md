@@ -29,7 +29,7 @@ solve rates, finish reasons, prompt tokens, repeated commands and summary compre
 ### 1. Raw tail: keep the newest actions verbatim
 
 - **Config:** `raw_tail: 1` (number of most recent actions shown in full), `raw_tail_chars: 2500` (head-and-tail cap per raw action).
-- **What it does:** the newest `raw_tail` actions are rendered in full (reasoning, tool calls, outputs) under "Action N (most recent, shown in full)". An action is summarized only when it leaves the tail, so the number of summarizer calls is unchanged; it is only delayed by one step.
+- **What it does:** the newest `raw_tail` actions are rendered in full (reasoning, tool calls, outputs) under "Action N (most recent, shown in full)". An action is summarized only when it leaves the tail, so summarization is delayed by `raw_tail` steps and each run makes `raw_tail` fewer summarizer calls (the actions still in the tail when the run ends are never summarized; they are logged with `summary: null`).
 - **Code:** `ActionMemory.add` / `ActionMemory.render` in `llm_ctf/memory.py`; template `llm_ctf/prompts/templates/default/memory.md.jinja2` (`raw` entries).
 - **Based on:** SWE-agent keeps the last 5 observations raw [1]; the Complexity Trap study keeps the last 10 turns [3]; AgentDiet never reduces the last 2 steps [4]; Anthropic's tool-result clearing keeps the 3 most recent [14]; Cybench keeps the last 3 iterations [32]; D-CIPHER's executors keep the last 5 [35]; AutoAttacker shows the latest result next to its summary [40]. Memory v1 was in the minority (with HackSynth [34] and ReSum [5]) in summarizing even the newest output.
 - **Addresses:** v1 limitation "the latest output is never seen verbatim"; issue I1 (repeated actions) if repeats follow summarized outputs.
@@ -74,7 +74,7 @@ solve rates, finish reasons, prompt tokens, repeated commands and summary compre
 ### 6. Task-aware summarizer
 
 - **Config:** `summarizer_sees_task: true` (with `summarizer: llm`).
-- **What it does:** the summarizer prompt (`memory_summarize.md.jinja2`) gains the challenge description and the current facts block, and one extra rule: say what the action established or ruled out with respect to finding the flag. The rule against suggesting next steps stays.
+- **What it does:** the summarizer prompt (`memory_summarize.md.jinja2`) gains the challenge description and the facts block as it was before the action being summarized, and one extra rule: say what the action established or ruled out with respect to finding the flag. The rule against suggesting next steps stays. (The first version passed the facts block after the action's own values had been added, which told the summarizer not to repeat exactly the values the action produced; fixed on 2026-11-04.)
 - **Code:** `LLMSummarizer.summarize`, `ActionMemory._summarize`, template `memory_summarize.md.jinja2`.
 - **Based on:** EnIGMA's LM summarizer receives the challenge statement and the last command [31]; ReSum conditions the summary on the question [5]; ACON tunes compression guidelines from failures [7]; Anthropic advises tuning for recall first [13].
 - **Addresses:** the v1 summarizer could not tell which values mattered.
@@ -99,7 +99,7 @@ solve rates, finish reasons, prompt tokens, repeated commands and summary compre
 
 From the review's ranked list (numbers 8–13 there), plus harness ideas from `logs/issues.md`:
 
-1. **Repeat detection in the harness** (issue I1): when a tool call exactly repeats an earlier one, return a note with the earlier action number instead of re-running it, or run it and prepend "same output as action N". Cheap and model-independent.
+1. ~~Repeat detection in the harness~~ (issue I1): implemented on 2026-11-04 as `repeat_detection: note | skip` (README, "Harness options"), untested on a model. A nudge after a reply without a tool call (issue I9) was implemented at the same time as `no_tool_nudge`.
 2. **Plan-and-status section** written by the agent at the end of each reply, keeping only the latest (Cybench [32], Manus [15]). Needs a format-compliance check for the 7B model first; the 4k baseline log shows replies with no tool call at all (issue I9), so compliance is not a given.
 3. **Separate summarizer model** via `summarizer_model` (needs a second vLLM server or a larger GPU) [2][4][5][7].
 4. **Subgoal-scoped memory** (HiAgent [21]) or a planner/executor split (D-CIPHER [35]); larger changes, and the published gains come from stronger or trained models.
@@ -112,4 +112,4 @@ From the review's ranked list (numbers 8–13 there), plus harness ideas from `l
 For every option: paired solve rate, `finish_reason` counts (especially `context_length`), mean and
 maximum `prompt_tokens`, rounds per run, repeated-command share, and for `llm` summaries the
 fraction of flag-like strings, paths and addresses in the raw output that survive into the summary
-(computable from the logged transcript; not yet scripted). `summary_seconds` gives the added cost.
+(`scripts/summary_fidelity.py`, run with the project's venv). `summary_seconds` gives the added cost.

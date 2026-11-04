@@ -5,7 +5,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 
 | ID | Status | Area | Issue |
 |---|---|---|---|
-| I1 | open | agent | The model repeats the same action (same command, same output) across rounds |
+| I1 | mitigation implemented, untested | agent | The model repeats the same action (same command, same output) across rounds |
 | I2 | measuring | agent | Runs end on `context_length` with a 4096-token context |
 | I3 | fixed | runner | Dataset download output was mistaken for challenge names |
 | I4 | fixed | runner | Instance had no outbound network (default security group) |
@@ -13,7 +13,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 | I6 | fixed | harness | vLLM backend logs omitted tool outputs and user messages |
 | I7 | open | harness | The loop makes `max_rounds + 1` model calls |
 | I8 | open | memory | Memory v1 never shows the latest output verbatim |
-| I9 | open | agent | Replies with no tool call: the model describes steps instead of running them |
+| I9 | mitigation implemented, untested | agent | Replies with no tool call: the model describes steps instead of running them |
 | I10 | open | runner | Some challenges' own services fail to start (`docker compose up` non-zero); the cause was not logged |
 
 ## I1. Repeated actions
@@ -26,7 +26,8 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
   2. A merged "earlier actions" list (`overflow: merge`) that keeps one line per tried command.
   3. A pinned facts block (`facts: true`) so exact values survive summarization.
   4. A harness-side check: if a tool call repeats an earlier one, append a note to the tool result ("you already ran this at action N; the output was the same") instead of running it again. Not implemented.
-- **Next step:** run the 32k paired comparison, read the per-challenge repeat counts, and look at 3–5 transcripts with repeats to see whether the repeat follows an identical, a summarized, or an empty output.
+- **Change (2026-11-04):** harness-side detection implemented in `llm_ctf/repeats.py` and `CTFConversation.run_tools` (`repeat_detection: off | note | skip`, default `off`). The key is the tool name plus the parsed arguments with defaults filled in, so `run_command(command="ls")` and `run_command(command="ls", timeout=10)` match. `note` runs the call again and adds `note: "Same call as in round N; the output is identical."` (or "differs") to the result; `skip` returns the stored result with a note instead of running it (can be stale if the container changed). Every log, including baseline logs, now carries `repeat_detection.count` and one entry per repeat (`round`, `earlier_rounds`, `tool`, `arguments`, `action`, `identical`); this is the authoritative count (slightly broader than `scripts/paired_analysis.py`, which compares logged commands verbatim). The note reaches the memory block under all three summarizers. `config/qwen_harness.yaml` enables `note`.
+- **Next step:** read the per-challenge repeat counts from the 32k baseline, look at 3–5 transcripts with repeats to see whether the repeat follows an identical, a summarized, or an empty output; then run `qwen_harness.yaml` against the baseline and compare `repeat_detection.count` and the share of `identical: true` repeats.
 
 ## I2. Context length
 
@@ -64,7 +65,8 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 - **Observed:** run `7a17`, challenge `2013f-cry-stfu`: both model replies were prose ("we need to understand what a Secure Test File Unit is…", "Let's proceed by examining…") with no `<function_calls>` block, so no command ran and the harness sent "Please proceed to the next step". The challenge ended on context length without a single tool call.
 - **Why it matters:** rounds spent on prose are lost, and memory cannot help a run that never produces an observation.
 - **How to measure:** share of model calls with zero tool calls, per arm (`tool_calls` per challenge in `scripts/paired_analysis.py`; a per-call count is easy to add).
-- **Candidate fixes:** a shorter keep-going message that restates the tool-call format with an example; `max_tokens` lower than 1024 so prose replies cost less context; a format check that re-prompts once when a reply has no tool call. None implemented.
+- **Change (2026-11-04):** `no_tool_nudge` (`--no-tool-nudge on`, `parameter.no_tool_nudge: true`, default off). After a reply with no tool call the harness sends the `no_tool_call` prompt: it says that nothing ran, shows a full `run_command` example in the formatter's syntax (`ls ~/ctf_files`) and lists the available tools, instead of "Please proceed to the next step using your best judgment." Costs roughly 90–110 tokens per prose-only round. With memory on, the nudge takes the place of "Choose your next action." after the memory block. Logs now carry `no_tool_call` (`count`, `rounds`, `nudges_sent`) in every mode. Not implemented: a lower `max_tokens` for prose replies; a one-off format re-prompt.
+- **Next step:** compare `no_tool_call.count` per arm between the baseline and `qwen_harness.yaml` runs, and check whether the round after a nudge contains a tool call.
 
 ## I8. Latest output never verbatim (memory v1)
 

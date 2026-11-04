@@ -232,10 +232,10 @@ def test_fact_extractor_patterns():
     assert found.count(("flag", "flag{abc_123}")) == 1          # duplicates once
     assert ("path", "/tmp/a.") not in found                     # trailing punctuation stripped
     assert ("path", "~") not in found                           # ~ without a slash is not a path
-    assert ("path", "/ctf_files/x.bin") in found                # ~/ paths lose the ~ (current behaviour)
+    assert ("path", "~/ctf_files/x.bin") in found               # ~/ paths keep the ~
     assert ("address", "0x1") not in found                      # too short
     assert not any(v == "localhost:1234" for _, v in found)     # not matched by the hostport pattern
-    assert ("path", "/10.0.0.5") in found                       # the path pattern also matches URL hosts
+    assert ("path", "/10.0.0.5") not in found                   # a URL host is not a path
 
     ten = " ".join(f"0x{i:08x}" for i in range(10))
     addresses = [v for k, v in extractor.extract(ten) if k == "address"]
@@ -292,11 +292,13 @@ def test_summarizer_sees_task_and_facts(tmp_path):
     run_conversation(tmp_path, {"enabled": True, "summarizer": "llm", "summarizer_sees_task": True,
                                 "facts": True, "flag_format": "flag{...}"},
                      client, [FACT_OUTPUT, "a.txt\nb.txt"], rounds=2)
-    prompt = client.summary_requests[0][0]["content"]
-    assert "<challenge>" in prompt and "Decrypt the message." in prompt
-    assert "Facts already recorded in memory" in prompt
-    assert "- flag: flag{abc_123}" in prompt
-    assert "established or ruled out" in prompt
+    # Action 1 is summarized before any facts exist; action 2's summarizer sees action 1's facts.
+    first, second = (r[0]["content"] for r in client.summary_requests[:2])
+    assert "<challenge>" in first and "Decrypt the message." in first
+    assert "established or ruled out" in first
+    assert "Facts already recorded in memory" not in first      # no facts before action 1
+    assert "Facts already recorded in memory" in second
+    assert "- flag: flag{abc_123}" in second                     # recorded from action 1
 
     client = FakeClient(REPLIES)
     run_conversation(tmp_path, {"enabled": True, "summarizer": "llm", "facts": True, "flag_format": "flag{...}"},

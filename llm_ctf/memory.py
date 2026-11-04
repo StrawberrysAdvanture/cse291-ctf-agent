@@ -124,6 +124,8 @@ class ActionRecord:
     summary_seconds: float = 0.0
     # (tool name, path in the container, number of lines) for outputs saved by save_outputs
     saved: List[Tuple[str, str, int]] = field(default_factory=list)
+    # The facts block as it was before this action, given to a task-aware summarizer.
+    facts_before: Optional[str] = None
 
     def render_full(self, max_chars: Optional[int] = None) -> str:
         """Plain-text rendering of the whole action, used as summarizer input and for raw entries.
@@ -241,7 +243,7 @@ class MaskingSummarizer:
             if tr.result.get("timed_out"):
                 status_bits.append("timed out")
             if tr.result.get("error"):
-                status_bits.append("error: " + shorten(str(tr.result["error"]), 200))
+                status_bits.append("error: " + shorten(str(tr.result["error"]), 200).rstrip("."))
             if tr.result.get("note"):   # added by repeat detection (llm_ctf/repeats.py)
                 status_bits.append("note: " + str(tr.result["note"]).rstrip("."))
             placeholder = (f"output omitted ({n_lines} lines, {len(output)} chars)" if output
@@ -304,7 +306,9 @@ class FactExtractor:
     PATTERNS = [
         ("url", re.compile(r"https?://[^\s'\"<>)\]]+")),
         ("hostport", re.compile(r"\b(?:\d{1,3}(?:\.\d{1,3}){3}|[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+):\d{2,5}\b")),
-        ("path", re.compile(r"(?<![\w.])(?:~|/)(?:[\w.+-]+/)*[\w.+-]+")),
+        # Absolute or ~/ paths; not preceded by a word character, a dot or another slash,
+        # so the host part of a URL (http://10.0.0.5/...) is not taken for a path.
+        ("path", re.compile(r"(?<![\w./])~?/(?:[\w.+-]+/)*[\w.+-]+")),
         ("address", re.compile(r"\b0x[0-9a-fA-F]{4,16}\b")),
         ("credential", re.compile(r"(?i)\b(?:password|passwd|passphrase|username|user|token|api[_-]?key|secret|key)\s*[:=]\s*\S{3,80}")),
     ]
@@ -394,7 +398,8 @@ class ContainerOutputStore:
         container = self.container_getter()
         if not text or not container:
             return None
-        path = f"{self.output_dir}/step_{step}_{index}_{tr.name}.txt"
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", tr.name)   # "[error]" would be a glob pattern
+        path = f"{self.output_dir}/step_{step}_{index}_{safe_name}.txt"
         try:
             subprocess.run(
                 ["docker", "exec", "-i", container, "bash", "-c",
@@ -486,6 +491,9 @@ class ActionMemory:
                 if saved:
                     record.saved.append(saved)
         if self.facts is not None:
+            # Captured before this action's values are added, so a task-aware summarizer is
+            # not told to omit the very values the action produced.
+            record.facts_before = self.facts.render()
             items = []
             for tr in record.results:
                 items += self.fact_extractor.extract(result_text(tr))
@@ -511,7 +519,7 @@ class ActionMemory:
         else:
             record.summarizer = self.summarizer.NAME
             task = self.task if self.summarizer_sees_task else None
-            facts = self.facts.render() if (self.summarizer_sees_task and self.facts) else None
+            facts = record.facts_before if (self.summarizer_sees_task and self.facts) else None
             record.summary = self.summarizer.summarize(record, task=task, facts=facts)
         record.summary_seconds = time.time() - start
         status.print(f"\n[Memory #{record.step}] {record.summarizer} summary, "
