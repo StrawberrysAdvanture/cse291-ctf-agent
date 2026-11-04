@@ -83,7 +83,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 - **Final count in `6b9b`:** 10 challenges crashed this way (`2013q-cry-slurp`, `2016q-cry-sleeping_guard`, `2016q-cry-broken_box`, `2016q-msc-coinslot`, `2016q-msc-regexpire`, `2016q-web-i_got_id`, `2016q-web-mfw`, `2016q-pwn-warmup`, `2016q-pwn-hungman`, `2015q-pwn-meme_shop`); none has a conversation log. The list is in `config/challenges/rerun-6b9b-crashed.txt` for a rerun with `--challenges-file`.
 - **Cause:** the three compose files (read from the dataset repository) publish host port `8000:8000`, and the runner serves vLLM on host port 8000, so `docker compose up` fails with a port conflict. The local setup guide uses port 8000 for vLLM too, so its suggested smoke test (`2016q-cry-sleeping_guard`) would hit the same conflict.
 - **Fix:** `aws/remote/job.sh` now publishes vLLM on host port 18000 (`VLLM_PORT`), and `keys.cfg` points there; `docs/local-setup.md` has a troubleshooting row. `CTFConversation.__enter__` also prints compose's output on such failures (`fbca814`).
-- **Consequence for the results:** the baseline solve rate is over 47 challenges, not 57. A memory run on the old port would have lost the same 10, so paired comparisons would have been unaffected; runs after `e31db05` include them.
+- **Resolved:** the 10 challenges were rerun with the port fix (run `20261104-020855-1eeb`, 2026-11-04 02:39–02:51 UTC): all 10 started their services and ran to `max_rounds`; their logs were added to the `6b9b` record, which now covers all 57 challenges (0 solved).
 
 ## I11. Tool calls lost to format slips
 

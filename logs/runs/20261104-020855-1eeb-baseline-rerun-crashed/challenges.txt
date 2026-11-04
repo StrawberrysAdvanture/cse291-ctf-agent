@@ -1,0 +1,10 @@
+2013q-cry-slurp
+2016q-cry-sleeping_guard
+2016q-cry-broken_box
+2016q-msc-coinslot
+2016q-msc-regexpire
+2016q-web-i_got_id
+2016q-web-mfw
+2016q-pwn-warmup
+2016q-pwn-hungman
+2015q-pwn-meme_shop
