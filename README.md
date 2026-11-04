@@ -27,6 +27,15 @@ python3 llm_ctf_solve.py -c config/base_config.yaml --split <test|development> -
 
 To fit long attempts into a small context window, the agent can replace each past action (model reply + tool outputs) with a short summary instead of resending the full conversation. Enable it with `--memory llm` (the model writes the summaries) or `--memory truncate` (no extra model call), or use `config/qwen_memory.yaml`. See [docs/memory.md](docs/memory.md).
 
+## Harness options
+
+Two options address issues I1 and I9 in `logs/issues.md`; both are off by default, so the baseline is unchanged.
+
+- `--repeat-detection note` (or `parameter.repeat_detection: note` in a config): when a tool call repeats an earlier call with the same arguments, the call runs again and its result gains a `note` ("Same call as in round N; the output is identical."). `skip` returns the earlier result without running the call; that can be stale if the container changed in between, so prefer `note`.
+- `--no-tool-nudge on` (`parameter.no_tool_nudge: true`): after a reply with no tool call, the harness sends a message that restates the tool-call format with an example instead of "Please proceed to the next step". The prompt is `no_tool_call` and can be overridden in the config's `prompts` section.
+
+`config/qwen_harness.yaml` turns both on. Every conversation log now records `repeat_detection` (mode, count, one entry per repeat) and `no_tool_call` (rounds without a tool call, nudges sent), in every mode.
+
 ## Running on AWS
 
 You can run the agent and a locally served model (vLLM) on a single AWS GPU instance. You need an AWS access key and the amount of GPU memory to request:
