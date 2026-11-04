@@ -52,7 +52,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 
 - **Observed:** 22:26 UTC, `g6e.xlarge` had no on-demand capacity in any `us-west-2` zone. `g6.xlarge` launched after one zone failed.
 - **Fix:** `aws/ctf-aws.sh launch` keeps every instance type that meets `--gpu-mem` and the vCPU quota, cheapest first, and tries each in every zone before giving up; the pre-launch summary lists the fallbacks (`g6e.xlarge -> g6e.2xlarge -> g7e.2xlarge` for 48 GB) and the status file records the type that launched. `--wait-capacity MIN` repeats the whole list every 5 minutes for up to MIN minutes. `VcpuLimitExceeded` (the quota is used by another of our instances) counts as no capacity for that type. `--instance-type` pins one type with no fallback. See `docs/aws.md`.
-- **Verified with:** a stub AWS CLI covering the fallback, wait, quota, IAM-retry and fatal-error paths, and `--dry-run` against the account. Not yet exercised by a real capacity shortage; while run `6b9b` uses 4 of the 8 G-vCPUs, every 8-vCPU fallback would hit `VcpuLimitExceeded`.
+- **Verified with:** a stub AWS CLI covering the fallback, wait, quota, IAM-retry and fatal-error paths, and `--dry-run` against the account. Exercised for real on 2026-11-04 06:58 UTC: with the hung `2c0c` instance still shutting down, `g6.xlarge` had no capacity in two zones and every 8-vCPU fallback hit `VcpuLimitExceeded`; `--wait-capacity 20` retried after 5 minutes and launched a `g6.xlarge` (run `636e`).
 
 ## I6. Incomplete conversation logs (fixed)
 
