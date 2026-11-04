@@ -14,11 +14,13 @@ from .backends import Backend
 from .prompts.prompts import PromptManager
 from .tools import ToolCall, ToolResult, Tool, TOOLSETS
 from .environment import CTFEnvironment
+from .repeats import RepeatDetector, call_key, canonical_arguments
 
 now = lambda: time.time()
 
 class CTFConversation:
-    def __init__(self, environment: CTFEnvironment, challenge: CTFChallenge, prompt_manager: PromptManager, backend: Backend, logfile: Path, max_rounds:int=30, max_cost:float=1.0, args=None):
+    def __init__(self, environment: CTFEnvironment, challenge: CTFChallenge, prompt_manager: PromptManager, backend: Backend, logfile: Path, max_rounds:int=30, max_cost:float=1.0, args=None,
+                 repeat_detection: str = "off", no_tool_nudge: bool = False):
         self.challenge = challenge
         self.environment = environment
         self.prompt_manager = prompt_manager
@@ -31,6 +33,15 @@ class CTFConversation:
         self.max_cost = max_cost
         # self.config = config
         self.args = args
+
+        # Repeated tool calls (llm_ctf/repeats.py): always counted, acted on when the mode is not "off".
+        self.repeats = RepeatDetector(repeat_detection)
+        # Replies without a tool call: with the nudge on, the next message restates the
+        # tool-call format with an example instead of the plain keep-going text.
+        self.no_tool_nudge = no_tool_nudge
+        self.no_tool_rounds: List[int] = []
+        self.nudges_sent = 0
+        self._no_tool_message = None
 
         self.rounds = 0
         self.cost = 0
@@ -61,7 +72,7 @@ class CTFConversation:
             try:
                 tools_run = self.run_conversation_step(next_msg)
                 if tools_run == 0:
-                    next_msg = "Please proceed to the next step using your best judgment."
+                    next_msg = self.no_tool_message()
                 else:
                     next_msg = None
             except KeyboardInterrupt:
@@ -99,13 +110,38 @@ class CTFConversation:
             status.print(f"[red bold]Challenge is unsolved after {self.max_rounds} rounds; exiting[/red bold]", markup=True)
             self.finish_reason = "max_rounds"
 
+    def no_tool_message(self) -> str:
+        """The message sent after a reply that called no tool.
+
+        With the nudge off this is the fixed keep-going text (kept as a literal so the
+        baseline is unchanged). With the nudge on it is the no_tool_call prompt with a
+        formatted example call, rendered once and reused.
+        """
+        if not self.no_tool_nudge:
+            return "Please proceed to the next step using your best judgment."
+        if self._no_tool_message is None:
+            tools = self.environment.available_tools
+            if "run_command" in tools:
+                example_call = tools["run_command"].make_call(id="1", command="ls ~/ctf_files")
+            else:
+                example_call = ToolCall.create_parsed("$TOOL_NAME", "$CALL_ID", {"$PARAMETER_NAME": "$PARAMETER_VALUE"})
+            example, formatter = self.backend.example_tool_call(example_call)
+            self._no_tool_message = self.prompt_manager.no_tool_call(
+                example=example, formatter=formatter, tool_names=list(tools))
+        return self._no_tool_message
+
+    def _same_call_text(self, last_round: int) -> str:
+        if last_round == self.rounds:
+            return "Same call as earlier in this round"
+        return f"Same call as in round {last_round}"
+
     def run_tools(self, tool_calls: List[ToolCall]) -> Tuple[Optional[str],bool]:
         tool_results = []
         for tool_call in tool_calls:
             # Tool lookup
             tool = self.environment.available_tools.get(tool_call.name)
             if not tool:
-                status.error_message(f"Unknown tool {tool_call.name}")
+                status.debug_message(f"Unknown tool {tool_call.name}")
                 tool_results.append(tool_call.error(f"Unknown tool {tool_call.name}"))
                 continue
 
@@ -113,6 +149,25 @@ class CTFConversation:
             parsed, tool_call = self.backend.parse_tool_arguments(tool, tool_call)
             if not parsed:
                 tool_results.append(tool_call)
+                continue
+
+            # Repeat detection: compare with the most recent earlier call of the same tool
+            # with the same arguments. The stored result is a copy, so notes added to the
+            # result sent to the model never change an earlier log entry.
+            key = call_key(tool, tool_call)
+            previous = self.repeats.previous(key)
+            if previous is not None and self.repeats.mode == "skip":
+                last = previous["rounds"][-1]
+                result = dict(previous["result"])
+                result["note"] = (f"{self._same_call_text(last)}; it was not run again. "
+                                  f"This is the result from round {last}.")
+                tool_res = ToolResult(tool_call.name, tool_call.id, result)
+                self.repeats.add_repeat(round_no=self.rounds, earlier_rounds=previous["rounds"], tool=tool.name,
+                                        arguments=canonical_arguments(tool, tool_call.parsed_arguments),
+                                        action="skip", identical=None)
+                self.repeats.remember(key, self.rounds, previous["result"])
+                status.print(f"\n[Repeat] {tool.name}: {self._same_call_text(last).lower()}; not run again", style="magenta bold")
+                tool_results.append(tool_res)
                 continue
 
             try:
@@ -123,10 +178,31 @@ class CTFConversation:
             except Exception as e:
                 status.debug_message(f"Error running {tool.name}: {e}")
                 tool_res = tool_call.error(f"{type(e).__name__} running {tool.name}: {e}")
+
+            clean_result = tool_res.result
+            if previous is not None:
+                identical = clean_result == previous["result"]
+                last = previous["rounds"][-1]
+                self.repeats.add_repeat(round_no=self.rounds, earlier_rounds=previous["rounds"], tool=tool.name,
+                                        arguments=canonical_arguments(tool, tool_call.parsed_arguments),
+                                        action="note" if self.repeats.mode == "note" else "none",
+                                        identical=identical)
+                if self.repeats.mode == "note":
+                    # A new dict, so the note is the last field of the result sent to the model
+                    # and the stored copy below stays free of notes.
+                    tool_res.result = dict(clean_result)
+                    tool_res.result["note"] = (f"{self._same_call_text(last)}; the output "
+                                               f"{'is identical' if identical else 'differs'}.")
+                    status.print(f"\n[Repeat] {tool.name}: {self._same_call_text(last).lower()}; "
+                                 f"output {'identical' if identical else 'differs'}", style="magenta bold")
+            self.repeats.remember(key, self.rounds, clean_result)
             tool_results.append(tool_res)
         return tool_results
 
     def run_conversation_step(self, message: Optional[str]=None):
+        # Any message after the first one is the reply to a round without a tool call.
+        if message is not None and self.rounds > 0:
+            self.nudges_sent += 1
         if message:
             status.user_message(message)
         status.assistant_message("🤔 ...thinking... 🤔")
@@ -159,6 +235,7 @@ class CTFConversation:
             self.backend.append(tool_results)
             return len(tool_calls)
         else:
+            self.no_tool_rounds.append(self.rounds)
             return 0 # No tools run
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -185,6 +262,13 @@ class CTFConversation:
                 },
                 # "exception_info": exception_info,
                 "finish_reason": self.finish_reason,
+                "repeat_detection": self.repeats.to_log(),
+                "no_tool_call": {
+                    "nudge": self.no_tool_nudge,
+                    "count": len(self.no_tool_rounds),
+                    "rounds": list(self.no_tool_rounds),
+                    "nudges_sent": self.nudges_sent,
+                },
                 **self.backend.extra_log(),
             },
             indent=4

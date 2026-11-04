@@ -60,6 +60,15 @@ def main():
                              "(llm: the model writes the summary; truncate: head and tail of each output; "
                              "mask: outputs replaced by a placeholder). Overrides the config's memory "
                              "section; other memory options come from the config. vllm backend only.")
+    parser.add_argument("--repeat-detection", choices=["off", "note", "skip"], default=None,
+                        help="when a tool call repeats an earlier call with the same arguments: "
+                             "note: run it and add a note to the result; skip: return the earlier "
+                             "result without running it. Overrides the config's "
+                             "parameter.repeat_detection (default off).")
+    parser.add_argument("--no-tool-nudge", choices=["on", "off"], default=None,
+                        help="after a reply with no tool call, send a message that restates the "
+                             "tool-call format with an example instead of 'Please proceed...'. "
+                             "Overrides the config's parameter.no_tool_nudge (default off).")
 
     # Log directory options
     parser.add_argument("--skip-exist", action="store_true", help="Skip existing logs and experiments")
@@ -76,6 +85,7 @@ def main():
         except FileNotFoundError:
             pass
 
+    config_parameter = {}
     if config:
         config_parameter = config.get("parameter", {})
         config_experiment = config.get("experiment", {})
@@ -98,6 +108,16 @@ def main():
             args.memory_config["summarizer"] = args.memory
     if args.memory_config.get("enabled") and args.backend != "vllm":
         parser.error("memory is currently implemented only for the vllm backend")
+
+    # Harness options (llm_ctf/conversation.py): the config's `parameter` section, overridden by the flags.
+    if args.repeat_detection is None:
+        args.repeat_detection = str(config_parameter.get("repeat_detection", "off")).lower()
+    if args.repeat_detection not in ("off", "note", "skip"):
+        parser.error(f"parameter.repeat_detection must be off, note or skip, not {args.repeat_detection!r}")
+    if args.no_tool_nudge is None:
+        args.no_tool_nudge = bool(config_parameter.get("no_tool_nudge", False))
+    else:
+        args.no_tool_nudge = args.no_tool_nudge == "on"
 
     status.set(quiet=args.quiet, debug=args.debug, disable_markdown=args.disable_markdown)
 
@@ -159,7 +179,8 @@ def main():
                         args=args
                     )
 
-    with CTFConversation(environment, challenge, prompt_manager, backend, logfile, max_rounds=args.max_rounds, max_cost=args.max_cost, args=args) as convo:
+    with CTFConversation(environment, challenge, prompt_manager, backend, logfile, max_rounds=args.max_rounds, max_cost=args.max_cost, args=args,
+                         repeat_detection=args.repeat_detection, no_tool_nudge=args.no_tool_nudge) as convo:
         convo.run()
 
 if __name__ == "__main__":

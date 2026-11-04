@@ -83,7 +83,7 @@ def fake_challenge():
               start_challenge_container=lambda: None, stop_challenge_container=lambda: None)
 
 
-def run_conversation(tmp_path, memory_config, client, outputs, rounds=2):
+def run_conversation(tmp_path, memory_config, client, outputs, rounds=2, **convo_kwargs):
     # The loop runs while rounds <= max_rounds, so max_rounds=2 gives three model calls.
     config = yaml.safe_load(open("config/qwen_baseline.yaml"))
     challenge = fake_challenge()
@@ -96,7 +96,7 @@ def run_conversation(tmp_path, memory_config, client, outputs, rounds=2):
     backend.messages = []  # Backend keeps its default message list on the class; start fresh
     logfile = tmp_path / "log.json"
     with CTFConversation(environment, challenge, prompt_manager, backend, logfile,
-                         max_rounds=rounds, max_cost=1, args=args) as convo:
+                         max_rounds=rounds, max_cost=1, args=args, **convo_kwargs) as convo:
         convo.run()
     return backend, json.loads(logfile.read_text())
 

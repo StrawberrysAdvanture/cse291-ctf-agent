@@ -242,6 +242,8 @@ class MaskingSummarizer:
                 status_bits.append("timed out")
             if tr.result.get("error"):
                 status_bits.append("error: " + shorten(str(tr.result["error"]), 200))
+            if tr.result.get("note"):   # added by repeat detection (llm_ctf/repeats.py)
+                status_bits.append("note: " + str(tr.result["note"]).rstrip("."))
             placeholder = (f"output omitted ({n_lines} lines, {len(output)} chars)" if output
                            else "no output")
             parts.append(f"{tr.name}: {placeholder}" + (f"; {', '.join(status_bits)}" if status_bits else "") + ".")

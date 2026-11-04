@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, Optional, Tuple, Type, List, Union
+from typing import TYPE_CHECKING, Any, Literal, Optional, Tuple, Type, List, Union
 from ..tools import Tool, ToolCall, ToolResult
 from ..utils import timestamp
+
+if TYPE_CHECKING:
+    from ..formatters.formatter import Formatter
 
 class IterKind(Enum):
     # May be skipped in iteration if item.skips is True
@@ -275,6 +278,17 @@ class Backend(ABC):
     def extra_log(self) -> dict:
         """Backend-specific fields to add to the conversation log."""
         return {}
+
+    def example_tool_call(self, tool_call: ToolCall) -> Tuple[Optional[str], Optional["Formatter"]]:
+        """A formatted example of tool_call and the formatter that produced it, for prompts.
+
+        Returns (None, None) for backends that use native function calling and have
+        no text format for tool calls.
+        """
+        formatter = getattr(self, "formatter", None)
+        if formatter is None:
+            return None, None
+        return formatter.format_tool_calls([tool_call]), formatter
 
 class NotGiven:
     pass

@@ -1,0 +1,9 @@
+{% from "macros.jinja" import render_content %}
+Your previous reply did not call any tool, so nothing was run and there is no new output. Do not describe what you would do next; do it. Reply with a tool call in exactly this format (this example lists the challenge files):
+
+{% if example %}
+{{ render_content(example, formatter) }}
+{% else %}
+Call one of the tools through the function-calling interface.
+{% endif %}
+Replace the tool name and parameters with the call you want to make. Available tools: {{ tool_names|join(', ') }}.

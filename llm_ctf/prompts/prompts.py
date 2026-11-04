@@ -145,5 +145,13 @@ class PromptManager:
     def keep_going(self, **kwargs):
         return self.render('keep_going', **kwargs)
 
+    def no_tool_call(self, **kwargs):
+        """The message sent after a reply without a tool call when the nudge is on.
+
+        Expects example (a formatted example call, or None), formatter (the formatter
+        that produced it, or None) and tool_names.
+        """
+        return self.render('no_tool_call', **kwargs)
+
     def system_message(self, chal, **kwargs):
         return self.render('system', chal=chal, **kwargs)
