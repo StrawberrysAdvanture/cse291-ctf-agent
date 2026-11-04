@@ -67,6 +67,14 @@ class XMLFormatter(Formatter):
                 name = elem.text
             else:
                 name = "[not provided]"
+            if self.lenient:
+                # Issue I13: a reply cut off by the token cap can end in the middle of an
+                # <invoke>; after the closing tags are re-added that fragment parses as an
+                # invoke with no (or an empty) tool name. Drop it instead of running "Unknown tool".
+                name = name.strip() if elem else ""
+                if not name:
+                    self.dropped_invokes += 1
+                    continue
             if elem := invocation.find("call_id"):
                 id = elem.text
             else:
@@ -102,6 +110,8 @@ class XMLFormatter(Formatter):
     # Set by the backend (issue I11). When true, a bare <invoke> counts as the start of the
     # tool calls and schema-style parameters (<parameter><name>x</name><value>v</value>) are accepted.
     lenient = False
+    # Invokes without a tool name dropped in lenient mode (issue I13: truncated fragments).
+    dropped_invokes = 0
 
     def extract_content(self, message) -> str:
         marker = re.escape(TOOL_USE_START)

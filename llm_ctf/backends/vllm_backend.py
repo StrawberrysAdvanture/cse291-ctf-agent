@@ -375,7 +375,8 @@ class VLLMBackend(Backend):
         return {
             "prompt_tokens": self.prompt_tokens,
             "tool_call_parsing": {"lenient": self.lenient_tool_calls,
-                                  "stop_after_first_call": self.stop_after_first_call},
+                                  "stop_after_first_call": self.stop_after_first_call,
+                                  "dropped_invokes": self.formatter.dropped_invokes},
             "memory": self.memory.to_log() if self.memory is not None else None,
             "memory_facts": self.memory.facts_log() if self.memory is not None else None,
         }

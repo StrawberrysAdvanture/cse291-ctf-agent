@@ -233,7 +233,23 @@ def test_bare_invoke_is_ignored_by_default(tmp_path):
     assert not first_reply.get("tool_calls")
     assert client.agent_requests[1][-1]["content"] == KEEP_GOING   # treated as a reply without a tool call
     assert "</invoke>" not in client.kwargs[0]["stop"]
-    assert log["tool_call_parsing"] == {"lenient": False, "stop_after_first_call": False}
+    assert log["tool_call_parsing"] == {"lenient": False, "stop_after_first_call": False, "dropped_invokes": 0}
+
+
+def test_lenient_drops_invoke_fragment_cut_off_by_the_token_cap(tmp_path):
+    # Issue I13: a batch of invokes that hits the token cap mid-tag. Once the closing tags are
+    # re-added, the fragment parses as an invoke with an empty tool name; it must be dropped,
+    # not run as "Unknown tool".
+    truncated = tool_call_reply("ls", "List.") + "\nStep 2: try again\n<invoke>\n<tool_name"
+    client = LenientClient([truncated, tool_call_reply("id", "...")], finish_reason="length")
+    _, log = run_conversation(tmp_path, {}, client, ["a.txt", "uid=0"], rounds=1,
+                              args_extra={"lenient_tool_calls": True})
+    first_reply = [m for _, m in log["messages"] if m.get("role") == "assistant"][0]
+    assert len(first_reply["tool_calls"]) == 1                    # the complete invoke only
+    results = tool_messages(log)
+    assert [r.get("stdout") for r in results] == ["a.txt", "uid=0"]
+    assert not any("Unknown tool" in r.get("error", "") for r in results)
+    assert log["tool_call_parsing"]["dropped_invokes"] == 1
 
 
 def test_lenient_accepts_bare_invoke_and_keeps_the_thought(tmp_path):
