@@ -35,6 +35,28 @@ def is_context_length_error(msg: str) -> bool:
         "maximum context length",
     ))
 
+def cap_tool_output(result: dict, max_chars: int) -> dict:
+    """Bound each long string field of a tool result to max_chars, keeping a head
+    and tail with a truncation marker. Prevents a single huge tool output (e.g. a
+    hexdump or file dump) from blowing the context window. Returns a new dict;
+    non-string or short values pass through unchanged. max_chars<=0 disables it."""
+    if not max_chars or max_chars <= 0 or not isinstance(result, dict):
+        return result
+    capped = {}
+    for k, v in result.items():
+        if isinstance(v, str) and len(v) > max_chars:
+            head = (max_chars * 7) // 10
+            tail = max_chars - head
+            omitted = len(v) - head - tail
+            capped[k] = (v[:head]
+                         + f"\n\n...[{omitted} characters truncated by output cap; "
+                           f"re-run with grep/head/tail/sed to see specific parts]...\n\n"
+                         + v[-tail:])
+        else:
+            capped[k] = v
+    return capped
+
+
 def summarize_tool_result(tool_call: ToolCall, result: ToolResult, latency: float) -> dict:
     """Per-call record used for the error, timeout and latency metrics."""
     res = result.result if isinstance(result.result, dict) else {}
@@ -185,6 +207,13 @@ class CTFConversation:
                     except Exception as e:
                         status.debug_message(f"Error running {tool.name}: {e}")
                         tool_res = tool_call.error(f"{type(e).__name__} running {tool.name}: {e}")
+            # Optionally bound tool output so one huge result can't blow the context.
+            # Off unless parameter.max_tool_output_chars is set (baseline unaffected).
+            cap = 0
+            if self.config:
+                cap = (self.config.get("parameter") or {}).get("max_tool_output_chars", 0) or 0
+            if cap and isinstance(tool_res.result, dict):
+                tool_res.result = cap_tool_output(tool_res.result, cap)
             tool_results.append(tool_res)
             records.append(summarize_tool_result(tool_call, tool_res, now() - st))
         return tool_results, records
