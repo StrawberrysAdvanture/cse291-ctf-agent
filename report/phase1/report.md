@@ -2,7 +2,7 @@
 Phase 1 report DRAFT. Main body (§1-5) kept under 2 pages; figures, full metric
 tables, and reproduction details live in the appendix.
 Numbers from: results/phase1/{by_set,by_category,attempts,tool_calls}.csv;
-analysis/score.py over logs/phase1; teammate branch cross-validation (aws-gpu-runner).
+analysis/score.py over logs/phase1; cross-validation from a parallel harness-hardening effort.
 TODO before submission: confirm final commit hash.
 Build the styled PDF with: ./build-pdf.sh  (uses report.css; needs pandoc + Chrome).
 -->
@@ -89,7 +89,7 @@ prescribed categories:
    produces the multi-step exploitation these challenges need. `check_flag` was called 213 times, so
    the agent *attempts* solutions; capability, not budget, is the ceiling.
 
-**Cross-validation.** A parallel harness-hardening effort (teammate branch) ran a paired A/B over
+**Cross-validation.** A parallel harness-hardening effort ran a paired A/B over
 the full 57-challenge set: a clean baseline 0/57 and a version with every mechanical fix
 applied (lenient parsing, output caps, repeat detection, nudges) also 0/57 (McNemar p = 1.0),
 despite driving no-tool replies from 56% to 0%. This independently confirms category (4) is
@@ -111,16 +111,20 @@ so that *either* outcome is a result.
   the latest output verbatim with older turns condensed. Repeats are suppressed *structurally* —
   serving the cached result for an identical call and emitting one call per reply — since a passive
   "you already ran this" note was found to *increase* repeats, not reduce them.
-- **Retained as hygiene (not the improvement under study):** output-capping, which removed the
-  `context_length` crash mode at no solve cost (§4) and bounds the memory summarizer's inputs,
-  plus lenient parsing to recover format-slip rounds. Neither is expected to add solves on its own.
-- **Controls & ablations:** compared against the simple agent and fixed retries at equal total
-  budget (the one solve occurred on 1 of 3 attempts, so apparent gains could be sampling); ablate
-  facts-only vs. ledger-only vs. full memory; optionally probe the capability ceiling by running
-  the same memory-augmented harness with a larger model on development.
-- **Metrics:** solve rate, plus *effective rounds* (executed, non-repeated tool calls), repeat rate,
-  and distinct commands per attempt — so a flat solve rate (H2) still yields a precise account of
-  what memory fixed and why it was not sufficient. Evaluated on held-out challenges only.
+- **Supporting fix — output capping.** We cap each tool result (keeping the head and tail with a
+  note to re-read the rest) so that a single oversized output can no longer overflow the context
+  window. In a preliminary run this removed most of the `context_length` failures (held-out 7 to 3,
+  development 3 to 1), and it also bounds the size of the inputs the memory summarizer has to process.
+- **Controls and ablations.** We will compare the memory-augmented agent against the simple baseline
+  agent and against a fixed-retries baseline given the same total budget, since the single solve
+  occurred on only one of three attempts and apparent gains could therefore be sampling noise. We
+  will ablate the memory into its parts (facts-only, ledger-only, and the full system) to see which
+  component matters, and we may probe the capability ceiling by running the same memory-augmented
+  harness with a larger model on the development set.
+- **Metrics.** Alongside solve rate, we will report the number of effective rounds (executed,
+  non-repeated tool calls), the repeat rate, and the number of distinct commands per attempt. This
+  way, even if the solve rate stays flat under hypothesis H2, we can still give a precise account of
+  what the memory system fixed and why it was not sufficient. All evaluation is on held-out challenges.
 
 <div class="pagebreak"></div>
 
