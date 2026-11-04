@@ -18,7 +18,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 
 ## I1. Repeated actions
 
-- **Observed by:** the team in local runs with Qwen2.5-7B-Instruct (reported 2026-11-03). Not yet quantified.
+- **Observed by:** the team in local runs with Qwen2.5-7B-Instruct (reported 2026-11-03). **Quantified in run `6b9b`** (32k, 3 rounds): 114 of 261 tool calls (44%) repeated an earlier call in the same challenge; 23 of 47 challenges had at least one repeat (`logs/runs/20261103-233511-6b9b-baseline-32k-3r/report.md`; what the repeats follow is in `findings.md` there).
 - **Why it matters:** with `max_rounds: 3` a repeated command wastes a third of the budget; in memory mode a summary that hides the outcome of a command invites running it again.
 - **How to measure:** `scripts/paired_analysis.py` reports, per arm, the share of tool calls whose command exactly repeats an earlier command in the same challenge, and the number of challenges with at least one repeat. Compare baseline against memory: if memory raises the rate, summaries are losing the outcome.
 - **Candidate fixes (from `docs/memory-literature.md`):**
@@ -62,7 +62,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 
 ## I9. Replies without tool calls
 
-- **Observed:** run `7a17`, challenge `2013f-cry-stfu`: both model replies were prose ("we need to understand what a Secure Test File Unit is…", "Let's proceed by examining…") with no `<function_calls>` block, so no command ran and the harness sent "Please proceed to the next step". The challenge ended on context length without a single tool call.
+- **Observed:** run `7a17`, challenge `2013f-cry-stfu`: both model replies were prose ("we need to understand what a Secure Test File Unit is…", "Let's proceed by examining…") with no `<function_calls>` block, so no command ran and the harness sent "Please proceed to the next step". The challenge ended on context length without a single tool call. **Quantified in run `6b9b`:** 101 of 181 replies (56%) had no tool call; in 19 of 47 challenges every reply lacked one; `check_flag` was never called in the whole run (0 of 47 solved).
 - **Why it matters:** rounds spent on prose are lost, and memory cannot help a run that never produces an observation.
 - **How to measure:** share of model calls with zero tool calls, per arm (`tool_calls` per challenge in `scripts/paired_analysis.py`; a per-call count is easy to add).
 - **Change (2026-11-04):** `no_tool_nudge` (`--no-tool-nudge on`, `parameter.no_tool_nudge: true`, default off). After a reply with no tool call the harness sends the `no_tool_call` prompt: it says that nothing ran, shows a full `run_command` example in the formatter's syntax (`ls ~/ctf_files`) and lists the available tools, instead of "Please proceed to the next step using your best judgment." Costs roughly 90–110 tokens per prose-only round. With memory on, the nudge takes the place of "Choose your next action." after the memory block. Logs now carry `no_tool_call` (`count`, `rounds`, `nudges_sent`) in every mode. Not implemented: a lower `max_tokens` for prose replies; a one-off format re-prompt.
@@ -76,7 +76,7 @@ Add an entry per issue; update its status when it changes. Run IDs refer to `log
 ## I10. Challenge services fail to start
 
 - **Observed:** run `6b9b` (baseline, 32k), 00:09 UTC: `2013q-cry-slurp` crashed in `CTFConversation.__enter__` because `docker compose -f .../crypto/slurp/docker-compose.yml up -d --force-recreate` returned non-zero. nyuctf runs compose with its output captured and `check=True`, so the log shows the command but not the error. The run continued with the next challenge; the crashed challenge has no conversation log and counts as `no_log` in the analysis.
-- **Also failed the same way in `6b9b`:** `2016q-cry-sleeping_guard` and `2016q-cry-broken_box` (00:44 UTC). Three challenges in all, none with a conversation log.
+- **Final count in `6b9b`:** 10 challenges crashed this way (`2013q-cry-slurp`, `2016q-cry-sleeping_guard`, `2016q-cry-broken_box`, `2016q-msc-coinslot`, `2016q-msc-regexpire`, `2016q-web-i_got_id`, `2016q-web-mfw`, `2016q-pwn-warmup`, `2016q-pwn-hungman`, `2015q-pwn-meme_shop`); none has a conversation log. The list is in `config/challenges/rerun-6b9b-crashed.txt` for a rerun with `--challenges-file`.
 - **Cause:** the three compose files (read from the dataset repository) publish host port `8000:8000`, and the runner serves vLLM on host port 8000, so `docker compose up` fails with a port conflict. The local setup guide uses port 8000 for vLLM too, so its suggested smoke test (`2016q-cry-sleeping_guard`) would hit the same conflict.
 - **Fix:** `aws/remote/job.sh` now publishes vLLM on host port 18000 (`VLLM_PORT`), and `keys.cfg` points there; `docs/local-setup.md` has a troubleshooting row. `CTFConversation.__enter__` also prints compose's output on such failures (`fbca814`).
-- **Consequence for the results:** these three challenges have no log in run `6b9b` and count as crashes; a memory run on the old port would lose the same three, so paired comparisons are unaffected but the baseline solve rate is over 54 challenges, not 57. Rerun them separately or include them in the next run.
+- **Consequence for the results:** the baseline solve rate is over 47 challenges, not 57. A memory run on the old port would have lost the same 10, so paired comparisons would have been unaffected; runs after `e31db05` include them.

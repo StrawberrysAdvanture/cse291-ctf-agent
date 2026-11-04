@@ -1,0 +1,12 @@
+# The 10 development challenges that crashed in run 20261103-233511-6b9b (port-8000 conflict, issue I10),
+# to rerun with: ./aws/ctf-aws.sh launch --gpu-mem 24 --challenges-file config/challenges/rerun-6b9b-crashed.txt
+2013q-cry-slurp
+2016q-cry-sleeping_guard
+2016q-cry-broken_box
+2016q-msc-coinslot
+2016q-msc-regexpire
+2016q-web-i_got_id
+2016q-web-mfw
+2016q-pwn-warmup
+2016q-pwn-hungman
+2015q-pwn-meme_shop
