@@ -3,7 +3,6 @@ Phase 1 report DRAFT. Main body (§1-5) kept under 2 pages; figures, full metric
 tables, and reproduction details live in the appendix.
 Numbers from: results/phase1/{by_set,by_category,attempts,tool_calls}.csv;
 analysis/score.py over logs/phase1; cross-validation from a parallel harness-hardening effort.
-TODO before submission: confirm final commit hash.
 Build the styled PDF with: ./build-pdf.sh  (uses report.css; needs pandoc + Chrome).
 -->
 
@@ -54,10 +53,10 @@ possibly-memorized; 0 suspicious accesses; the re-score agreed with the harness 
 
 - **Solve rate:** held-out 1.7% of attempts, 1/20 challenges (`2023q-rev-baby_s_third`, rev);
   development 0%, 0/10; pilot 1/3. Every category is 0 except held-out rev 1/4.
-- **Not reliable:** the one solve occurred on only 1 of its 3 attempts (solved in 7 rounds;
+- **Run-to-run variance:** the one solve occurred on only 1 of its 3 attempts (solved in 7 rounds;
   `max_rounds` on the other two) — expected at temperature 0.6, and a reminder that a single success
   is within run-to-run noise rather than a stable capability.
-- **Cost / effort:** ~$9.4 total GPU (~11 g6-hours), well under the $20/day, $200 caps;
+- **Cost / effort:** ~$9.4 all-in (~11 g6-hours; ~$8.8 GPU compute), well under the $20/day, $200 caps;
   ~540–590 s and ~170–190k cumulative tokens per attempt; peak single-call context ~16–18k of 32k.
 - **Tool vs. model time, cold vs. steady:** tool-call latency is negligible (median 0.05 s),
   so wall time is almost entirely model generation; the only slow tool is Ghidra (up to 30 s,
@@ -71,7 +70,7 @@ possibly-memorized; 0 suspicious accesses; the re-score agreed with the harness 
 ## 4. Failure analysis
 
 89 of 90 attempts failed (77 `max_rounds`, 11 `context_length`, 1 `give_up`). Hand-inspecting
-traces (1,647 model rounds, 1,849 tool calls across dev + held-out), we sort causes into the four
+traces (1,647 model rounds, 1,809 tool calls across dev + held-out), we sort causes into the four
 prescribed categories:
 
 1. **Poor tool interface — the largest mechanical loss.** 57% of rounds produced no executed
@@ -113,8 +112,9 @@ so that either outcome is a result.
   "you already ran this" note was found to increase repeats, not reduce them.
 - **Supporting fix — output capping.** We cap each tool result (keeping the head and tail with a
   note to re-read the rest) so that a single oversized output can no longer overflow the context
-  window. In a preliminary run this removed most of the `context_length` failures (held-out 7 to 3,
-  development 3 to 1), and it also bounds the size of the inputs the memory summarizer has to process.
+  window. In a preliminary run this removed most of the `context_length` failures on held-out (7 to
+  3, full set), with the same direction on a smaller development subset (2 to 1), and it also bounds
+  the size of the inputs the memory summarizer has to process.
 - **Controls and ablations.** We will compare the memory-augmented agent against the simple baseline
   agent and against a fixed-retries baseline given the same total budget, since the single solve
   occurred on only one of three attempts and apparent gains could therefore be sampling noise. We
@@ -131,7 +131,7 @@ so that either outcome is a result.
 ## Appendix A — Reproducibility
 
 - **Pinned versions:** Qwen2.5-7B-Instruct-AWQ; vLLM 0.7.3; NYU CTF Bench dataset v20250206; agent
-  code at the tagged Phase 1 commit.
+  code at the Phase 1 commit in the repository above.
 - **Fresh state:** every attempt recreates the challenge container (`docker compose … --force-recreate`);
   no state carries across attempts. Deterministic seeds `1000 + attempt_index`.
 - **Exclusions** (documented in `experiments/phase1/challenges.yaml`): challenges with unbuildable
@@ -153,7 +153,7 @@ and crypto (most invalid commands and repeats per attempt); rev produced the onl
 - **Tool-call latency:** median 0.05 s, p90 0.11 s, max 30 s (Ghidra). Tool latency is
   negligible; model latency dominates wall time.
 - **Invalid commands:** 67% (dev) / 52% (held-out) of tool calls returned an error or non-zero exit
-  (1,066 of 1,849).
+  (1,045 of 1,809).
 - **Timeouts:** 0 attempt-level (none hit the 900 s wall as finish reason); 60 command-level, all
   held-out (47 crypto, 13 pwn) — interactive binaries blocking on stdin.
 - **No-tool rounds / truncation:** 938/1,647 (57%) rounds made no executed tool call; 816/1,647
@@ -173,7 +173,8 @@ and crypto (most invalid commands and repeats per attempt); rev produced the onl
 - **Phase 1 (done, Nov 4):** harness instrumentation, network isolation, independent scoring,
   reproducible dev + held-out runs (3 attempts each, fixed commit), execution measurements, failure
   analysis. Code, configs, results, and logs: see the repository above.
-- **Nov 4:** output-capping experiment complete (dev + held-out); results in §5.
+- **Nov 4:** output-capping experiment complete (held-out full set, plus a development subset);
+  results in §5.
 - **~Nov 20:** Phase 2 mechanism finalized + ablation + fixed-retries baseline on held-out.
 - **~Dec 5:** full held-out evaluation and variability runs; write-up.
 - **Dec 10:** Phase 2 code and final report.
