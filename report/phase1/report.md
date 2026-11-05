@@ -11,7 +11,7 @@ Build the styled PDF with: ./build-pdf.sh  (uses report.css; needs pandoc + Chro
 
 **Team:** Jackie Liu, Benjamin Yu, Steven Zhang · Option 7 · **Repo:** https://github.com/StrawberrysAdvanture/cse291-ctf-agent
 
-> **Research question.** How well does a *small, self-hosted* model (7B, 4-bit, on a single
+> **Research question.** How well does a small, self-hosted model (7B, 4-bit, on a single
 > mid-range GPU) solve CTF challenges under a fixed step and token budget, and what limits it —
 > model capability, the tool interface, lost intermediate findings, or unproductive loops? We
 > establish a reproducible baseline, measure its execution behavior, and use the failure breakdown
@@ -75,7 +75,7 @@ traces (1,647 model rounds, 1,849 tool calls across dev + held-out), we sort cau
 prescribed categories:
 
 1. **Poor tool interface — the largest mechanical loss.** 57% of rounds produced no executed
-   tool call. Many are *format slips*: the model emits a well-formed `<invoke>` without the
+   tool call. Many are format slips: the model emits a well-formed `<invoke>` without the
    `<function_calls>` wrapper the parser requires, so the harness drops it (191 such rounds in a
    seed-matched run); an unwrapped invoke also has no stop sequence, so ~50% of replies run to
    the 1,024-token cap. It also calls programs (`cat`, `python3`) as if they were tools (~23
@@ -84,10 +84,10 @@ prescribed categories:
    output was already seen) — the dominant pattern in `max_rounds` traces.
 3. **Lost intermediate findings.** Tied to (2): with no memory of verified outputs, earlier results
    fall out of attention; large outputs are also the ones causing the 11 `context_length` overflows
-   (a *symptom* of unmanaged history, not steady growth — peaks averaged only ~16–18k of 32k).
+   (a symptom of unmanaged history, not steady growth — peaks averaged only ~16–18k of 32k).
 4. **Missing model knowledge — the binding constraint.** Even on clean rounds, a 7B model rarely
    produces the multi-step exploitation these challenges need. `check_flag` was called 213 times, so
-   the agent *attempts* solutions; capability, not budget, is the ceiling.
+   the agent attempts solutions; capability, not budget, is the ceiling.
 
 **Cross-validation.** A parallel harness-hardening effort ran a paired A/B over
 the full 57-challenge set: a clean baseline 0/57 and a version with every mechanical fix
@@ -102,15 +102,15 @@ low-level fixes (treat overflow as `context_length`; cap oversized outputs).
 ~1,160 repeats raises solves — versus (H2) capability-bound — a 7B model cannot do the required
 exploitation regardless. The cross-validation (0/57 even with every mechanical fix, but at only 3
 rounds) hints at H2; our 20-round budget leaves room for H1. Phase 2 is designed to distinguish them,
-so that *either* outcome is a result.
+so that either outcome is a result.
 
 - **Primary — structured working memory.** Give the agent a persistent, compact state each round
   instead of the raw transcript: a deduplicated action ledger (one line per distinct command and
   its outcome) to curb repeats; a pinned facts block (exact hashes, decoded strings, addresses,
   and paths extracted from tool output) that survives summarization so values are not re-derived; and
-  the latest output verbatim with older turns condensed. Repeats are suppressed *structurally* —
+  the latest output verbatim with older turns condensed. Repeats are suppressed structurally —
   serving the cached result for an identical call and emitting one call per reply — since a passive
-  "you already ran this" note was found to *increase* repeats, not reduce them.
+  "you already ran this" note was found to increase repeats, not reduce them.
 - **Supporting fix — output capping.** We cap each tool result (keeping the head and tail with a
   note to re-read the rest) so that a single oversized output can no longer overflow the context
   window. In a preliminary run this removed most of the `context_length` failures (held-out 7 to 3,
